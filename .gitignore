@@ -6,3 +6,5 @@ mlruns/
 *.pkl
 .ipynb_checkpoints/
 __pycache__/
+.api.env
+logs/
