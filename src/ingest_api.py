@@ -13,11 +13,35 @@ API_BASE = os.environ["API_BASE_URL"].rstrip("/")
 API_KEY = os.environ["API_KEY"]
 
 # Season-level endpoints -> function that builds a unique key for each record
-SEASON_ENDPOINTS = {
+TEAM_SEASON_ENDPOINTS = {
     "stats/season":          lambda r: f"{r['team']}|{r['statName']}",
     "stats/season/advanced": lambda r: r["team"],
     "records":               lambda r: str(r["teamId"]),
 }
+
+# Bulk equivalents of /player/season/overview (which needs one call per player):
+# box score stats + usage + PPA, plus roster for bio info.
+PLAYER_SEASON_ENDPOINTS = {
+    "stats/player/season": lambda r: f"{r['playerId']}|{r['team']}",
+    "player/usage":        lambda r: f"{r['id']}|{r['team']}",
+    "ppa/players/season":  lambda r: f"{r['id']}|{r['team']}",
+    "roster":              lambda r: f"{r['id']}|{r['team']}",
+}
+
+
+def group_player_stats(records):
+    """stats/player/season returns one row per player per stat (~135k/season).
+    Group into one record per player: stats = {category: {statType: value}}."""
+    players = {}
+    for r in records:
+        p = players.setdefault((r["playerId"], r["team"]), {
+            k: r[k] for k in ("season", "playerId", "player", "position", "team", "conference")
+        } | {"stats": {}})
+        p["stats"].setdefault(r["category"], {})[r["statType"]] = r["stat"]
+    return list(players.values())
+
+
+PREPARE = {"stats/player/season": group_player_stats}
 
 
 def get_conn():
@@ -73,15 +97,19 @@ def load_games(conn, season):
     conn.commit()
 
 
-def load_team_seasons(conn, season):
-    for endpoint, key in SEASON_ENDPOINTS.items():
+def load_season_endpoints(conn, season, table, endpoints):
+    for endpoint, key in endpoints.items():
         records = fetch(endpoint, {"year": season})
-        rows = [(endpoint, season, key(rec), Json(rec)) for rec in records]
+        if endpoint in PREPARE:
+            records = PREPARE[endpoint](records)
+        # keyed dict drops exact repeats (player/usage returns some records twice)
+        by_key = {key(rec): rec for rec in records}
+        rows = [(endpoint, season, k, Json(rec)) for k, rec in by_key.items()]
 
         with conn.cursor() as cur:
             if rows:
-                execute_values(cur, """
-                    INSERT INTO raw.api_team_seasons (endpoint, season, record_key, payload)
+                execute_values(cur, f"""
+                    INSERT INTO {table} (endpoint, season, record_key, payload)
                     VALUES %s
                     ON CONFLICT (endpoint, season, record_key) DO UPDATE
                     SET payload = EXCLUDED.payload, fetched_at = now()
@@ -91,13 +119,26 @@ def load_team_seasons(conn, season):
         time.sleep(1)
 
 
-LOADERS = {"games": load_games, "team_seasons": load_team_seasons}
+def load_team_seasons(conn, season):
+    load_season_endpoints(conn, season, "raw.api_team_seasons", TEAM_SEASON_ENDPOINTS)
+
+
+def load_player_seasons(conn, season):
+    load_season_endpoints(conn, season, "raw.api_player_seasons", PLAYER_SEASON_ENDPOINTS)
+
+
+LOADERS = {
+    "games": load_games,
+    "team_seasons": load_team_seasons,
+    "player_seasons": load_player_seasons,
+}
 
 
 if __name__ == "__main__":
     # python src\ingest_api.py                         -> games, current year (daily job)
     # python src\ingest_api.py 2004 2025               -> games, backfill a range
     # python src\ingest_api.py team_seasons 2004 2025  -> season stats + records
+    # python src\ingest_api.py player_seasons 2004 2025 -> player stats, usage, PPA, roster
     args = sys.argv[1:]
     loader = LOADERS[args.pop(0)] if args and args[0] in LOADERS else load_games
     years = [int(a) for a in args]

@@ -21,13 +21,16 @@ The CSV is not in this repo (it's git-ignored). Place it at `data/cfb_data.csv`.
    API_BASE_URL=https://api.collegefootballdata.com
    API_KEY=<your key>
 ```
-- Free tier allows 1,000 calls/month. A full 2004-2026 backfill costs ~46 calls for games and ~69 for team seasons.
+- Free tier allows 1,000 calls/month. A full 2004-2026 backfill costs ~46 calls for games, ~69 for team seasons, and ~92 for player seasons.
 - Endpoints loaded by `src/ingest_api.py`:
 
 | Mode | Endpoints | Raw table |
 |---|---|---|
 | `games` | `/games` (regular + postseason) | `raw.api_games` |
 | `team_seasons` | `/stats/season`, `/stats/season/advanced`, `/records` | `raw.api_team_seasons` |
+| `player_seasons` | `/stats/player/season`, `/player/usage`, `/ppa/players/season`, `/roster` | `raw.api_player_seasons` |
+
+`/player/season/overview` returns box score + usage + PPA for one player, but needs one call per player per season (~14,000/season). `player_seasons` gets the same data from the bulk endpoints in 4 calls per season.
 
 Every run is logged to `raw.ingest_log`. Re-running a season upserts, so it's safe to refresh the current season daily.
 
@@ -36,11 +39,12 @@ Every run is logged to `raw.ingest_log`. Re-running a season upserts, so it's sa
 | Layer | Schema | Description |
 |---|---|---|
 | Raw | `raw.cfb_games` | CSV loaded as-is, all columns as text |
-| Raw | `raw.api_games`, `raw.api_team_seasons` | API responses stored as JSON (`payload jsonb`), one row per record |
+| Raw | `raw.api_games`, `raw.api_team_seasons`, `raw.api_player_seasons` | API responses stored as JSON (`payload jsonb`), one row per record |
 | Core | `core.games`, `core.team_games` | Typed, keyed tables; one row per game, and one row per team per game |
 | Marts | `marts.team_seasons` | One row per team per season, built from the CSV (records, scoring, box-score averages) |
 | Marts | `marts.game_features` | One row per game with pre-game features only (season-to-date, last 5, prior season) + targets |
 | Marts | `marts.team_season_stats` | One row per FBS team per season, built from the API (records, scoring, box-score totals, advanced PPA/success-rate/havoc stats) |
+| Marts | `marts.player_season_stats` | One row per player per team per season, built from the API (bio, passing/rushing/receiving/defense/kicking/return stats, usage, PPA) |
 
 ## Setup
 
@@ -67,9 +71,10 @@ Every run is logged to `raw.ingest_log`. Re-running a season upserts, so it's sa
    docker exec cfb-postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f /sql/05_raw_api.sql'
    python src\ingest_api.py 2004 2026                # games
    python src\ingest_api.py team_seasons 2004 2026   # season stats + records
+   python src\ingest_api.py player_seasons 2004 2026 # player stats, usage, PPA, roster
 ```
    With no years, a mode loads the current season only (e.g. `python src\ingest_api.py team_seasons`).
-8. Build the API team-season table by running `sql/07_team_season_stats.sql`.
+8. Build the API tables by running `sql/07_team_season_stats.sql` and `sql/08_player_season_stats.sql`.
 
 ## Project layout
 
@@ -94,3 +99,8 @@ data/                CSV files (git-ignored)
   - API naming is confusing for interceptions: `ints_thrown` (API `interceptions`) is by the team's offense, `def_interceptions` (API `passesIntercepted`) is by its defense.
   - `def_*` advanced stats are what the defense allowed, so lower PPA / success rate is better.
   - Cross-check vs `marts.team_seasons` (CSV): W-L matches for 2,577 of 2,581 shared team-seasons.
+- `marts.player_season_stats`:
+  - Keyed on `(season, player_id, team)`; a player who transferred has one row per team.
+  - API coverage is thin before 2009 (8 players in 2004, ~2,300 in 2008). Usage and PPA start in 2013; defensive stats start in 2016. Use 2016+ for complete player data.
+  - Usage and PPA exist only for offensive players with plays (~3,000-5,500/season); other players have NULLs there.
+  - `class_year` is 1-5 (FR-5th yr). Some roster rows carry the season instead of a class; those are NULL.
