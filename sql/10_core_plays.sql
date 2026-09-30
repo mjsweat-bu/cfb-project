@@ -89,3 +89,6 @@ ALTER TABLE core.plays ADD PRIMARY KEY (play_id);
 CREATE INDEX ix_plays_game    ON core.plays (game_id);
 CREATE INDEX ix_plays_offense ON core.plays (season, offense);
 CREATE INDEX ix_plays_defense ON core.plays (season, defense);
+
+-- refresh planner statistics so queries right after a rebuild get a good plan
+ANALYZE core.plays;

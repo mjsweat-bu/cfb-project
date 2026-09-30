@@ -115,3 +115,6 @@ FROM p;
 ALTER TABLE core.player_games ADD PRIMARY KEY (game_id, player_id, team);
 CREATE INDEX ix_player_games_player ON core.player_games (player_id, season);
 CREATE INDEX ix_player_games_team   ON core.player_games (season, team);
+
+-- refresh planner statistics so queries right after a rebuild get a good plan
+ANALYZE core.player_games;
