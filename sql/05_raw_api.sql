@@ -37,6 +37,33 @@ CREATE TABLE IF NOT EXISTS raw.api_player_seasons (
     PRIMARY KEY (endpoint, season, record_key)
 );
 
+-- Play-by-play from /plays (FBS games), one row per play
+CREATE TABLE IF NOT EXISTS raw.api_plays (
+    source_id   text PRIMARY KEY,   -- the API's play ID
+    season      integer NOT NULL,
+    season_type text    NOT NULL,
+    week        integer NOT NULL,
+    game_id     bigint  NOT NULL,
+    payload     jsonb   NOT NULL,
+    first_seen  timestamptz NOT NULL DEFAULT now(),
+    fetched_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS ix_api_plays_week ON raw.api_plays (season, season_type, week);
+
+-- Player box scores from /games/players (FBS games), one row per game:
+-- payload.teams[].categories[].types[].athletes[]
+CREATE TABLE IF NOT EXISTS raw.api_game_players (
+    source_id   text PRIMARY KEY,   -- the API's game ID
+    season      integer NOT NULL,
+    season_type text    NOT NULL,
+    week        integer NOT NULL,
+    game_id     bigint  NOT NULL,
+    payload     jsonb   NOT NULL,
+    first_seen  timestamptz NOT NULL DEFAULT now(),
+    fetched_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS ix_api_game_players_week ON raw.api_game_players (season, season_type, week);
+
 CREATE TABLE IF NOT EXISTS raw.ingest_log (
     run_at   timestamptz DEFAULT now(),
     endpoint text,

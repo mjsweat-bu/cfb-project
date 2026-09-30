@@ -21,7 +21,7 @@ The CSV is not in this repo (it's git-ignored). Place it at `data/cfb_data.csv`.
    API_BASE_URL=https://api.collegefootballdata.com
    API_KEY=<your key>
 ```
-- Free tier allows 1,000 calls/month. A full 2004-2026 backfill costs ~46 calls for games, ~69 for team seasons, and ~92 for player seasons.
+- Free tier allows 1,000 calls/month. A full 2004-2026 backfill costs ~46 calls for games, ~69 for team seasons, ~92 for player seasons, ~18 per season for plays (~200 for 2016-2026), and ~18 per season for game player box scores (~216 for 2004-2015).
 - Endpoints loaded by `src/ingest_api.py`:
 
 | Mode | Endpoints | Raw table |
@@ -29,8 +29,12 @@ The CSV is not in this repo (it's git-ignored). Place it at `data/cfb_data.csv`.
 | `games` | `/games` (regular + postseason) | `raw.api_games` |
 | `team_seasons` | `/stats/season`, `/stats/season/advanced`, `/records` | `raw.api_team_seasons` |
 | `player_seasons` | `/stats/player/season`, `/player/usage`, `/ppa/players/season`, `/roster` | `raw.api_player_seasons` |
+| `plays` | `/calendar`, then `/plays` once per week (FBS games) | `raw.api_plays` |
+| `game_players` | `/calendar`, then `/games/players` once per week (FBS games) | `raw.api_game_players` |
 
 `/player/season/overview` returns box score + usage + PPA for one player, but needs one call per player per season (~14,000/season). `player_seasons` gets the same data from the bulk endpoints in 4 calls per season.
+
+`plays` and `game_players` skip weeks that are already loaded and ended more than 7 days ago, so a daily run of the current season only refetches recent weeks.
 
 Every run is logged to `raw.ingest_log`. Re-running a season upserts, so it's safe to refresh the current season daily.
 
@@ -39,13 +43,16 @@ Every run is logged to `raw.ingest_log`. Re-running a season upserts, so it's sa
 | Layer | Schema | Description |
 |---|---|---|
 | Raw | `raw.cfb_games` | CSV loaded as-is, all columns as text |
-| Raw | `raw.api_games`, `raw.api_team_seasons`, `raw.api_player_seasons` | API responses stored as JSON (`payload jsonb`), one row per record |
+| Raw | `raw.api_games`, `raw.api_team_seasons`, `raw.api_player_seasons`, `raw.api_plays`, `raw.api_game_players` | API responses stored as JSON (`payload jsonb`), one row per record |
 | Core | `core.games`, `core.team_games` | Typed, keyed tables; one row per game, and one row per team per game |
+| Core | `core.player_games` | One row per player per game (2004-2015), typed box-score stats from `/games/players` |
+| Core | `core.plays` | Typed play-by-play (2016+), one row per play, with scrimmage flag, run/pass category, offensive yards and success flag |
 | Marts | `marts.team_seasons` | One row per team per season, built from the CSV (records, scoring, box-score averages) |
 | Marts | `marts.game_features` | One row per game with pre-game features only (season-to-date, last 5, prior season) + targets |
 | Marts | `marts.team_season_stats` | One row per FBS team per season, built from the API (records, scoring, box-score totals, advanced PPA/success-rate/havoc stats) |
 | Marts | `marts.player_season_stats` | One row per player per team per season, built from the API (bio, passing/rushing/receiving/defense/kicking/return stats, usage, PPA) |
 | Marts | `marts.player_career_stats` | One row per player: career totals and rates aggregated from `marts.player_season_stats` (the API has no career endpoint) |
+| Marts | `marts.team_season_downs` | One row per FBS team per season (2016+): yards per play, run/pass split, pass rate, distance, success rate and PPA on each down, for offense and defense |
 
 ## Setup
 
@@ -73,9 +80,13 @@ Every run is logged to `raw.ingest_log`. Re-running a season upserts, so it's sa
    python src\ingest_api.py 2004 2026                # games
    python src\ingest_api.py team_seasons 2004 2026   # season stats + records
    python src\ingest_api.py player_seasons 2004 2026 # player stats, usage, PPA, roster
+   python src\ingest_api.py plays 2016 2026          # play-by-play
+   python src\ingest_api.py game_players 2004 2015   # per-game player box scores
 ```
    With no years, a mode loads the current season only (e.g. `python src\ingest_api.py team_seasons`).
-8. Build the API tables by running `sql/07_team_season_stats.sql`, `sql/08_player_season_stats.sql` and `sql/09_player_career_stats.sql`.
+8. Build the API tables by running these in order (08 uses 07 and 12):
+   `sql/07_team_season_stats.sql`, `sql/12_core_player_games.sql`, `sql/08_player_season_stats.sql`, `sql/09_player_career_stats.sql`, `sql/10_core_plays.sql`, `sql/11_team_season_downs.sql`.
+   Run them with `psql -1 -v ON_ERROR_STOP=1 ...` so a failed script rolls back instead of leaving its table dropped.
 
 ## Project layout
 
@@ -102,10 +113,18 @@ data/                CSV files (git-ignored)
   - Cross-check vs `marts.team_seasons` (CSV): W-L matches for 2,577 of 2,581 shared team-seasons.
 - `marts.player_season_stats`:
   - Keyed on `(season, player_id, team)`; a player who transferred has one row per team.
-  - API coverage is thin before 2009 (8 players in 2004, ~2,300 in 2008). Usage and PPA start in 2013; defensive stats start in 2016. Use 2016+ for complete player data.
+  - `/stats/player/season` is missing many players before 2016 (8 players in 2004, and e.g. Cam Newton 2010). For 2004-2015, those gaps are filled by summing `core.player_games` (FBS teams only); `stats_source` = `season` or `games` says where a row's box score came from.
+  - Usage and PPA start in 2013; defensive box-score stats start in 2016.
   - Usage and PPA exist only for offensive players with plays (~3,000-5,500/season); other players have NULLs there.
   - `class_year` is 1-5 (FR-5th yr). Some roster rows carry the season instead of a class; those are NULL.
 - `marts.player_career_stats`:
   - API player IDs are cleaned up first. A gap of 4+ seasons within one ID starts a new career (the API occasionally reuses an ID), shown as `player_id` suffix `-2`. Transfers that got a new ID are merged when name + hometown match, seasons don't overlap, and the span is at most 7 seasons. `player_ids` lists every API ID in a row.
   - Careers starting before 2009 are incomplete (thin API coverage), and 2026 careers are in progress.
   - Per-play PPA can't be summed, so the career table has PPA totals plus `best_season_ppa_avg`.
+- `core.plays` / `marts.team_season_downs`:
+  - Loaded from 2016 on. Earlier seasons exist in the API but cost ~18 calls each.
+  - Scrimmage plays only (down 1-4, run or pass); penalties, kicks, timeouts and 2-pt tries are excluded.
+  - Sacks count as pass plays (analytics convention; official college stats count them as rushes).
+  - Interceptions and fumble-return TDs count as 0 offensive yards, because the API's `yardsGained` on those plays is the defense's return.
+  - Success rate: gain of at least 50% of the distance on 1st down, 70% on 2nd, 100% on 3rd/4th.
+  - Includes postseason and garbage time.

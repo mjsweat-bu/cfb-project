@@ -1,5 +1,5 @@
 import os, sys, time
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 import requests
 import psycopg2
@@ -127,10 +127,64 @@ def load_player_seasons(conn, season):
     load_season_endpoints(conn, season, "raw.api_player_seasons", PLAYER_SEASON_ENDPOINTS)
 
 
+# Weekly endpoints -> (raw table, record ID field, game ID field)
+WEEKLY_ENDPOINTS = {
+    "plays":         ("raw.api_plays",        "id", "gameId"),   # one row per play
+    "games/players": ("raw.api_game_players", "id", "id"),       # one row per game
+}
+
+
+def load_weekly(conn, season, endpoint):
+    """FBS games' data, one call per calendar week (~18 per season).
+    Weeks already loaded that ended over 7 days ago are skipped, so a daily
+    run of the current season only refetches recent weeks."""
+    table, id_field, game_field = WEEKLY_ENDPOINTS[endpoint]
+    now = datetime.now(timezone.utc)
+    with conn.cursor() as cur:
+        cur.execute(f"SELECT DISTINCT season_type, week FROM {table} WHERE season = %s", (season,))
+        loaded = set(cur.fetchall())
+
+    for wk in fetch("calendar", {"year": season}):
+        season_type, week = wk["seasonType"], wk["week"]
+        start = datetime.fromisoformat(wk["startDate"].replace("Z", "+00:00"))
+        end = datetime.fromisoformat(wk["endDate"].replace("Z", "+00:00"))
+        if start > now:
+            continue    # not played yet
+        if (season_type, week) in loaded and end < now - timedelta(days=7):
+            continue    # already loaded and settled
+
+        records = fetch(endpoint, {"year": season, "week": week,
+                                   "seasonType": season_type, "classification": "fbs"})
+        by_id = {str(r[id_field]): r for r in records}
+        rows = [(rid, season, season_type, week, r[game_field], Json(r)) for rid, r in by_id.items()]
+
+        with conn.cursor() as cur:
+            if rows:
+                execute_values(cur, f"""
+                    INSERT INTO {table} (source_id, season, season_type, week, game_id, payload)
+                    VALUES %s
+                    ON CONFLICT (source_id) DO UPDATE
+                    SET payload = EXCLUDED.payload, fetched_at = now()
+                """, rows, page_size=1000)
+            log(cur, f"{endpoint} {season_type} wk {week}", season, len(rows))
+        conn.commit()
+        time.sleep(1)
+
+
+def load_plays(conn, season):
+    load_weekly(conn, season, "plays")
+
+
+def load_game_players(conn, season):
+    load_weekly(conn, season, "games/players")
+
+
 LOADERS = {
     "games": load_games,
     "team_seasons": load_team_seasons,
     "player_seasons": load_player_seasons,
+    "plays": load_plays,
+    "game_players": load_game_players,
 }
 
 
@@ -139,6 +193,8 @@ if __name__ == "__main__":
     # python src\ingest_api.py 2004 2025               -> games, backfill a range
     # python src\ingest_api.py team_seasons 2004 2025  -> season stats + records
     # python src\ingest_api.py player_seasons 2004 2025 -> player stats, usage, PPA, roster
+    # python src\ingest_api.py plays 2016 2025          -> play-by-play (~18 calls per season)
+    # python src\ingest_api.py game_players 2004 2015  -> player box scores per game (~18 calls per season)
     args = sys.argv[1:]
     loader = LOADERS[args.pop(0)] if args and args[0] in LOADERS else load_games
     years = [int(a) for a in args]
