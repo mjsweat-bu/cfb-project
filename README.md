@@ -45,6 +45,7 @@ Every run is logged to `raw.ingest_log`. Re-running a season upserts, so it's sa
 | Marts | `marts.game_features` | One row per game with pre-game features only (season-to-date, last 5, prior season) + targets |
 | Marts | `marts.team_season_stats` | One row per FBS team per season, built from the API (records, scoring, box-score totals, advanced PPA/success-rate/havoc stats) |
 | Marts | `marts.player_season_stats` | One row per player per team per season, built from the API (bio, passing/rushing/receiving/defense/kicking/return stats, usage, PPA) |
+| Marts | `marts.player_career_stats` | One row per player: career totals and rates aggregated from `marts.player_season_stats` (the API has no career endpoint) |
 
 ## Setup
 
@@ -74,7 +75,7 @@ Every run is logged to `raw.ingest_log`. Re-running a season upserts, so it's sa
    python src\ingest_api.py player_seasons 2004 2026 # player stats, usage, PPA, roster
 ```
    With no years, a mode loads the current season only (e.g. `python src\ingest_api.py team_seasons`).
-8. Build the API tables by running `sql/07_team_season_stats.sql` and `sql/08_player_season_stats.sql`.
+8. Build the API tables by running `sql/07_team_season_stats.sql`, `sql/08_player_season_stats.sql` and `sql/09_player_career_stats.sql`.
 
 ## Project layout
 
@@ -104,3 +105,7 @@ data/                CSV files (git-ignored)
   - API coverage is thin before 2009 (8 players in 2004, ~2,300 in 2008). Usage and PPA start in 2013; defensive stats start in 2016. Use 2016+ for complete player data.
   - Usage and PPA exist only for offensive players with plays (~3,000-5,500/season); other players have NULLs there.
   - `class_year` is 1-5 (FR-5th yr). Some roster rows carry the season instead of a class; those are NULL.
+- `marts.player_career_stats`:
+  - API player IDs are cleaned up first. A gap of 4+ seasons within one ID starts a new career (the API occasionally reuses an ID), shown as `player_id` suffix `-2`. Transfers that got a new ID are merged when name + hometown match, seasons don't overlap, and the span is at most 7 seasons. `player_ids` lists every API ID in a row.
+  - Careers starting before 2009 are incomplete (thin API coverage), and 2026 careers are in progress.
+  - Per-play PPA can't be summed, so the career table has PPA totals plus `best_season_ppa_avg`.
