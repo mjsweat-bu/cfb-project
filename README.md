@@ -21,7 +21,7 @@ The CSV is not in this repo (it's git-ignored). Place it at `data/cfb_data.csv`.
    API_BASE_URL=https://api.collegefootballdata.com
    API_KEY=<your key>
 ```
-- Free tier allows 1,000 calls/month. A full 2004-2026 backfill costs ~46 calls for games, ~69 for team seasons, ~92 for player seasons, ~18 per season for plays (~200 for 2016-2026), and ~18 per season for game player box scores (~216 for 2004-2015).
+- Free tier allows 1,000 calls/month. A full 2004-2026 backfill costs ~46 calls for games, ~69 for team seasons, ~92 for player seasons, ~18 per season for plays (~460 for 2001-2026), and ~18 per season for game player box scores (~216 for 2004-2015).
 - Endpoints loaded by `src/ingest_api.py`:
 
 | Mode | Endpoints | Raw table |
@@ -46,13 +46,13 @@ Every run is logged to `raw.ingest_log`. Re-running a season upserts, so it's sa
 | Raw | `raw.api_games`, `raw.api_team_seasons`, `raw.api_player_seasons`, `raw.api_plays`, `raw.api_game_players` | API responses stored as JSON (`payload jsonb`), one row per record |
 | Core | `core.games`, `core.team_games` | Typed, keyed tables; one row per game, and one row per team per game |
 | Core | `core.player_games` | One row per player per game (2004-2015), typed box-score stats from `/games/players` |
-| Core | `core.plays` | Typed play-by-play (2016+), one row per play, with scrimmage flag, run/pass category, offensive yards and success flag |
+| Core | `core.plays` | Typed play-by-play (2001+, ~3.4M plays), one row per play, with scrimmage flag, run/pass category, offensive yards and success flag |
 | Marts | `marts.team_seasons` | One row per team per season, built from the CSV (records, scoring, box-score averages) |
 | Marts | `marts.game_features` | One row per game with pre-game features only (season-to-date, last 5, prior season) + targets |
 | Marts | `marts.team_season_stats` | One row per FBS team per season, built from the API (records, scoring, box-score totals, advanced PPA/success-rate/havoc stats) |
 | Marts | `marts.player_season_stats` | One row per player per team per season, built from the API (bio, passing/rushing/receiving/defense/kicking/return stats, usage, PPA) |
 | Marts | `marts.player_career_stats` | One row per player: career totals and rates aggregated from `marts.player_season_stats` (the API has no career endpoint) |
-| Marts | `marts.team_season_downs` | One row per FBS team per season (2016+): yards per play, run/pass split, pass rate, distance, success rate and PPA on each down, for offense and defense |
+| Marts | `marts.team_season_downs` | One row per FBS team per season (2004+, where the FBS team list starts): yards per play, run/pass split, pass rate, distance, success rate and PPA on each down, for offense and defense |
 
 ## Setup
 
@@ -80,7 +80,7 @@ Every run is logged to `raw.ingest_log`. Re-running a season upserts, so it's sa
    python src\ingest_api.py 2004 2026                # games
    python src\ingest_api.py team_seasons 2004 2026   # season stats + records
    python src\ingest_api.py player_seasons 2004 2026 # player stats, usage, PPA, roster
-   python src\ingest_api.py plays 2016 2026          # play-by-play
+   python src\ingest_api.py plays 2001 2026          # play-by-play
    python src\ingest_api.py game_players 2004 2015   # per-game player box scores
 ```
    With no years, a mode loads the current season only (e.g. `python src\ingest_api.py team_seasons`).
@@ -122,7 +122,9 @@ data/                CSV files (git-ignored)
   - Careers starting before 2009 are incomplete (thin API coverage), and 2026 careers are in progress.
   - Per-play PPA can't be summed, so the career table has PPA totals plus `best_season_ppa_avg`.
 - `core.plays` / `marts.team_season_downs`:
-  - Loaded from 2016 on. Earlier seasons exist in the API but cost ~18 calls each.
+  - Loaded for 2001-2026, everything the API has (it returns no plays before 2001).
+  - Early seasons are incomplete in the API: 2002 has only 31 games (mostly bowls), and 2001-2004 have ~420-480 games vs ~850+ from 2011 on. 2001 week 4 is empty (games postponed after 9/11).
+  - The API has no `/calendar` for 2001; the loader falls back to regular weeks 1-16 plus the postseason for any past season without a calendar.
   - Scrimmage plays only (down 1-4, run or pass); penalties, kicks, timeouts and 2-pt tries are excluded.
   - Sacks count as pass plays (analytics convention; official college stats count them as rushes).
   - Interceptions and fumble-return TDs count as 0 offensive yards, because the API's `yardsGained` on those plays is the defense's return.

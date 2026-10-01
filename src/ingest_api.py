@@ -144,7 +144,16 @@ def load_weekly(conn, season, endpoint):
         cur.execute(f"SELECT DISTINCT season_type, week FROM {table} WHERE season = %s", (season,))
         loaded = set(cur.fetchall())
 
-    for wk in fetch("calendar", {"year": season}):
+    calendar = fetch("calendar", {"year": season})
+    if not calendar and season < now.year:
+        # the API has no calendar for some early seasons (e.g. 2001) even though
+        # it has their plays: fall back to regular weeks 1-16 plus the postseason
+        long_ago = "2000-01-01T00:00:00Z"
+        calendar = [{"seasonType": "regular", "week": w, "startDate": long_ago, "endDate": long_ago}
+                    for w in range(1, 17)]
+        calendar.append({"seasonType": "postseason", "week": 1, "startDate": long_ago, "endDate": long_ago})
+
+    for wk in calendar:
         season_type, week = wk["seasonType"], wk["week"]
         start = datetime.fromisoformat(wk["startDate"].replace("Z", "+00:00"))
         end = datetime.fromisoformat(wk["endDate"].replace("Z", "+00:00"))
