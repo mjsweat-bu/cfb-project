@@ -15,7 +15,7 @@ WITH qbs AS (
     FROM marts.player_season_stats
     WHERE (position = 'QB' OR pass_att >= 10)
       AND last_name IS NOT NULL
-      -- AND team = 'Auburn'
+      AND team = 'Auburn'
 ),
 qb_plays AS (
     SELECT q.player_id, q.player, q.team, p.season, p.distance, p.off_yards, p.play_category
