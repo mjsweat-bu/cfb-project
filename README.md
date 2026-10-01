@@ -100,6 +100,49 @@ notebooks/           analysis notebooks
 data/                CSV files (git-ignored)
 ```
 
+## Analysis queries and notebooks
+
+Ad-hoc analysis lives in `sql/Queries/` (read-only queries against the built tables) and
+`notebooks/` (charts). Notebooks read the `.sql` files directly, so editing a query changes the
+notebook's data on the next run.
+
+### Queries (`sql/Queries/`)
+
+Most queries start with a `params` CTE (season, conference, highlighted team, minimum games) so
+they can be re-pointed without editing the logic.
+
+| File | What it returns | Source |
+|---|---|---|
+| `sec_team_third_down.sql` | Team offense by conference/season: 3rd-down plays, conversion rate, distance and yards gained, split by pass/rush (conversions, rate, avg yards to go); play calling; plays and drives per game/half/quarter; plays per drive by half/quarter; yards per drive | `core.plays` |
+| `sec_scoring_drive_conversions.sql` | 3rd/4th-down attempts and conversions on scoring (TD/FG) vs non-scoring drives, by team plus a conference total row | `core.plays` |
+| `sec_interception_drives.sql` | Two queries. (1) One row per team for its main QB (most pass plays): INTs per 100 passes, pick-sixes, return yards, play # in drive, passes/rushes/sacks before the INT, down and distance, field position, score/clock situation. (2) Every interception with passer, down & distance, drive context and play text | `core.plays` |
+| `first_possession_three_and_out.sql` | All-time (2001+) FBS ranking: how often a team's first possession of a game is a three-and-out punt | `core.plays`, `marts.team_season_stats` |
+| `three_and_outs.sql` | All-time FBS ranking of three-and-outs on any drive: totals, per game, % of drives, plus one column per season 2016-2026. Filter by conference (current members, or only seasons spent in the conference) | `core.plays`, `marts.team_season_stats` |
+| `qb_third_down.sql` | 3rd-down distance, yards gained and conversion rate per QB (QB plays matched from play text) | `core.plays`, `marts.player_season_stats` |
+| `Auburn_QBs.sql` | Auburn QBs with Auburn-only passing/rushing totals | `marts.player_season_stats` |
+| `Auburn_v_Tenn.sql` | Currently: SEC 2026 rows of `marts.team_season_stats` | `marts.team_season_stats` |
+| `test.sql` | Row-count and sanity checks for the core layer | `core.games` |
+
+Shared definitions used by the play-by-play queries:
+- **Plays** are scrimmage plays (`core.plays.is_scrimmage`); penalties, timeouts and kicks are not plays. Sacks count as pass plays.
+- **Three-and-out** = the team's 4th counted play on a drive is a punt (penalties don't count toward the 4 plays).
+- **QB names** come from the play text (`#12 A.Daniels pass ...` or `Hank Brown pass ...`, normalized to `A.Daniels`), since plays carry no player IDs.
+- **FBS** = team-seasons in `marts.team_season_stats` (2004+); 2001-2003 use each team's 2004 status.
+
+### Notebooks (`notebooks/`)
+
+| Notebook | Query | Charts |
+|---|---|---|
+| `SEC_third_downs.ipynb` | `sec_team_third_down.sql`, `sec_scoring_drive_conversions.sql` | 3rd-down conversion vs total 3rd-down plays (overall/pass/rush); passing vs rushing vs overall conversion dot plot with SEC average and play counts; 1st vs 2nd half plays per drive sized by 3rd-down plays; scoring vs non-scoring drive conversion |
+| `sec_interceptions.ipynb` | `sec_interception_drives.sql` | Main QBs: play in drive vs drive yards before the INT; one dot per QB: avg yards to go vs avg play in drive (sized by INTs); **QB INT grade** (0-100: 50% INT rate, 30% costly INTs, 20% unforced INTs, each per 100 passes and scaled best = 100 to worst = 0) as a report card, INT-type breakdown and rate-vs-volume scatter |
+| `auburn_qbs.ipynb` | `Auburn_QBs.sql` | Passing vs rushing yards per Auburn QB |
+
+Notebook notes:
+- Select the `.venv` kernel and make sure the database container is running (`docker compose up -d`).
+- Queries containing `%` (e.g. `ILIKE '%intercept%'`) must be escaped as `%%` before `pd.read_sql`, because psycopg2 treats `%` as a parameter placeholder.
+- `.sql` files with two queries are split on their `-- ---------- 2.` marker and each part loaded separately.
+- If a notebook is changed on disk while open in VS Code, use **File: Revert File** to load the new version (saving the open copy overwrites it).
+
 ## Data quality notes
 
 - `(game_date, away_team, home_team)` is unique and enforced as a constraint.
