@@ -78,23 +78,32 @@ def log(cur, endpoint, season, n):
     print(f"{datetime.now():%Y-%m-%d %H:%M} {endpoint} season {season}: {n} records")
 
 
-def load_games(conn, season):
+def load_per_game(conn, season, endpoint, table):
+    """Endpoints that return one record per game, keyed by the game ID."""
     records = []
     for season_type in ("regular", "postseason"):
-        records += fetch("games", {"year": season, "seasonType": season_type})
+        records += fetch(endpoint, {"year": season, "seasonType": season_type})
         time.sleep(1)
     rows = [(str(rec["id"]), season, Json(rec)) for rec in records]
 
     with conn.cursor() as cur:
         if rows:
-            execute_values(cur, """
-                INSERT INTO raw.api_games (source_id, season, payload)
+            execute_values(cur, f"""
+                INSERT INTO {table} (source_id, season, payload)
                 VALUES %s
                 ON CONFLICT (source_id) DO UPDATE
                 SET payload = EXCLUDED.payload, fetched_at = now()
             """, rows)
-        log(cur, "games", season, len(rows))
+        log(cur, endpoint, season, len(rows))
     conn.commit()
+
+
+def load_games(conn, season):
+    load_per_game(conn, season, "games", "raw.api_games")
+
+
+def load_lines(conn, season):
+    load_per_game(conn, season, "lines", "raw.api_lines")
 
 
 def load_season_endpoints(conn, season, table, endpoints):
@@ -194,6 +203,7 @@ LOADERS = {
     "player_seasons": load_player_seasons,
     "plays": load_plays,
     "game_players": load_game_players,
+    "lines": load_lines,
 }
 
 
@@ -204,6 +214,7 @@ if __name__ == "__main__":
     # python src\ingest_api.py player_seasons 2004 2025 -> player stats, usage, PPA, roster
     # python src\ingest_api.py plays 2016 2025          -> play-by-play (~18 calls per season)
     # python src\ingest_api.py game_players 2004 2015  -> player box scores per game (~18 calls per season)
+    # python src\ingest_api.py lines 2004 2026          -> betting lines, all providers (2 calls per season)
     args = sys.argv[1:]
     loader = LOADERS[args.pop(0)] if args and args[0] in LOADERS else load_games
     years = [int(a) for a in args]

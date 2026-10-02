@@ -21,7 +21,7 @@ The CSV is not in this repo (it's git-ignored). Place it at `data/cfb_data.csv`.
    API_BASE_URL=https://api.collegefootballdata.com
    API_KEY=<your key>
 ```
-- Free tier allows 1,000 calls/month. A full 2004-2026 backfill costs ~46 calls for games, ~69 for team seasons, ~92 for player seasons, ~18 per season for plays (~460 for 2001-2026), and ~18 per season for game player box scores (~216 for 2004-2015).
+- Free tier allows 1,000 calls/month. A full 2004-2026 backfill costs ~46 calls for games, ~69 for team seasons, ~92 for player seasons, ~18 per season for plays (~460 for 2001-2026), ~18 per season for game player box scores (~216 for 2004-2015), and 2 per season for betting lines.
 - Endpoints loaded by `src/ingest_api.py`:
 
 | Mode | Endpoints | Raw table |
@@ -31,6 +31,7 @@ The CSV is not in this repo (it's git-ignored). Place it at `data/cfb_data.csv`.
 | `player_seasons` | `/stats/player/season`, `/player/usage`, `/ppa/players/season`, `/roster` | `raw.api_player_seasons` |
 | `plays` | `/calendar`, then `/plays` once per week (FBS games) | `raw.api_plays` |
 | `game_players` | `/calendar`, then `/games/players` once per week (FBS games) | `raw.api_game_players` |
+| `lines` | `/lines` (regular + postseason, all providers; data starts in 2013) | `raw.api_lines` |
 
 `/player/season/overview` returns box score + usage + PPA for one player, but needs one call per player per season (~14,000/season). `player_seasons` gets the same data from the bulk endpoints in 4 calls per season.
 
@@ -43,10 +44,12 @@ Every run is logged to `raw.ingest_log`. Re-running a season upserts, so it's sa
 | Layer | Schema | Description |
 |---|---|---|
 | Raw | `raw.cfb_games` | CSV loaded as-is, all columns as text |
-| Raw | `raw.api_games`, `raw.api_team_seasons`, `raw.api_player_seasons`, `raw.api_plays`, `raw.api_game_players` | API responses stored as JSON (`payload jsonb`), one row per record |
+| Raw | `raw.api_games`, `raw.api_team_seasons`, `raw.api_player_seasons`, `raw.api_plays`, `raw.api_game_players`, `raw.api_lines` | API responses stored as JSON (`payload jsonb`), one row per record |
 | Core | `core.games`, `core.team_games` | Typed, keyed tables; one row per game, and one row per team per game |
 | Core | `core.player_games` | One row per player per game (2004-2015), typed box-score stats from `/games/players` |
 | Core | `core.plays` | Typed play-by-play (2001+, ~3.4M plays), one row per play, with scrimmage flag, run/pass category, offensive yards and success flag |
+| Core | `core.game_lines` | Betting lines (2013+), one row per game per provider: spread and total (open and close), moneylines, and ATS / over-under results. Spreads are from the home side (-7 = home favored by 7) |
+| Core | `core.game_spreads` | One line per game: the `consensus` provider where the API has it (through 2022), otherwise the median across providers |
 | Marts | `marts.team_seasons` | One row per team per season, built from the CSV (records, scoring, box-score averages) |
 | Marts | `marts.game_features` | One row per game with pre-game features only (season-to-date, last 5, prior season) + targets |
 | Marts | `marts.team_season_stats` | One row per FBS team per season, built from the API (records, scoring, box-score totals, advanced PPA/success-rate/havoc stats) |
@@ -82,10 +85,11 @@ Every run is logged to `raw.ingest_log`. Re-running a season upserts, so it's sa
    python src\ingest_api.py player_seasons 2004 2026 # player stats, usage, PPA, roster
    python src\ingest_api.py plays 2001 2026          # play-by-play
    python src\ingest_api.py game_players 2004 2015   # per-game player box scores
+   python src\ingest_api.py lines 2004 2026          # betting lines
 ```
    With no years, a mode loads the current season only (e.g. `python src\ingest_api.py team_seasons`).
 8. Build the API tables by running these in order (08 uses 07 and 12):
-   `sql/07_team_season_stats.sql`, `sql/12_core_player_games.sql`, `sql/08_player_season_stats.sql`, `sql/09_player_career_stats.sql`, `sql/10_core_plays.sql`, `sql/11_team_season_downs.sql`.
+   `sql/07_team_season_stats.sql`, `sql/12_core_player_games.sql`, `sql/08_player_season_stats.sql`, `sql/09_player_career_stats.sql`, `sql/10_core_plays.sql`, `sql/11_team_season_downs.sql`, `sql/13_core_game_lines.sql`.
    Run them with `psql -1 -v ON_ERROR_STOP=1 ...` so a failed script rolls back instead of leaving its table dropped.
 
 ## Project layout

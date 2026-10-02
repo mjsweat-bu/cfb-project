@@ -64,6 +64,15 @@ CREATE TABLE IF NOT EXISTS raw.api_game_players (
 );
 CREATE INDEX IF NOT EXISTS ix_api_game_players_week ON raw.api_game_players (season, season_type, week);
 
+-- Betting lines from /lines, one row per game: payload.lines[] has one entry per provider
+CREATE TABLE IF NOT EXISTS raw.api_lines (
+    source_id   text PRIMARY KEY,   -- the API's game ID
+    season      integer NOT NULL,
+    payload     jsonb NOT NULL,
+    first_seen  timestamptz NOT NULL DEFAULT now(),
+    fetched_at  timestamptz NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS raw.ingest_log (
     run_at   timestamptz DEFAULT now(),
     endpoint text,
