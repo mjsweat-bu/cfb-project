@@ -118,6 +118,11 @@ they can be re-pointed without editing the logic.
 | File | What it returns | Source |
 |---|---|---|
 | `sec_team_third_down.sql` | Team offense by conference/season: 3rd-down plays, conversion rate, distance and yards gained, split by pass/rush (conversions, rate, avg yards to go); play calling; plays and drives per game/half/quarter; plays per drive by half/quarter; yards per drive | `core.plays` |
+| `sec_team_ppa.sql` | Team offense and defense by conference/season: PPA (EPA) per play and total, split by pass/rush, success rate and explosiveness (PPA on successful plays), strength of schedule (opponents' season averages, leave-one-out) and opponent-adjusted PPA overall/pass/rush, plus net adjusted PPA (offense minus defense); garbage time excluded | `core.plays` |
+| `auburn_defense_player_ppa.sql` | One team's defenders for a season: average PPA of the plays each made (tackles, sacks, INTs, PBUs, hurries, forced/recovered fumbles parsed from play text), vs. team average, run/pass tackle PPA, TFLs, stop %, havoc plays; roster name and position. Only games in the ESPN "(#nn Name)" text format are picked up | `core.plays`, `raw.api_player_seasons` |
+| `sec_linebacker_ppa.sql` | Conference-wide version of `auburn_defense_player_ppa.sql` for one roster position (default LB): every player's PPA on plays made, vs. own-team average, tackles by run/pass, TFLs, stop %, sacks/INTs/PBUs, havoc plays, with ranks and each team's tackler-parse coverage | `core.plays`, `raw.api_player_seasons` |
+| `sec_offensive_line.sql` | O-line as a unit by conference/season: line yards per rush, stuff %, power success %, second-level / open-field yards, run blocking by direction (left/middle/right), sack rate, pressure rate (sacks + hurries), O-line penalties per game, with conference ranks | `core.plays`, `raw.api_player_seasons` |
+| `sec_offensive_line_players.sql` | Individual offensive linemen: accepted penalties by type (holding, pre-snap, other), penalty yards, gains and TDs called back, 3rd/4th-down penalties, per-100-snap rate; roster bio. Penalties are the only per-lineman stat in play-by-play | `core.plays`, `raw.api_player_seasons` |
 | `sec_scoring_drive_conversions.sql` | 3rd/4th-down attempts and conversions on scoring (TD/FG) vs non-scoring drives, by team plus a conference total row | `core.plays` |
 | `sec_interception_drives.sql` | Two queries. (1) One row per team for its main QB (most pass plays): INTs per 100 passes, pick-sixes, return yards, play # in drive, passes/rushes/sacks before the INT, down and distance, field position, score/clock situation. (2) Every interception with passer, down & distance, drive context and play text | `core.plays` |
 | `first_possession_three_and_out.sql` | All-time (2001+) FBS ranking: how often a team's first possession of a game is a three-and-out punt | `core.plays`, `marts.team_season_stats` |
@@ -132,6 +137,12 @@ Shared definitions used by the play-by-play queries:
 - **Three-and-out** = the team's 4th counted play on a drive is a punt (penalties don't count toward the 4 plays).
 - **QB names** come from the play text (`#12 A.Daniels pass ...` or `Hank Brown pass ...`, normalized to `A.Daniels`), since plays carry no player IDs.
 - **FBS** = team-seasons in `marts.team_season_stats` (2004+); 2001-2003 use each team's 2004 status.
+- **PPA** (predicted points added) is the API's name for EPA: expected points after a play minus before it. Offense: higher is better. Defense (`def_` columns, defenders' plays): it's the offense's PPA allowed, so lower is better. Compare within a season; the FBS average has drifted up (~0.05/play in 2005-09, ~0.12 in the 2020s).
+- **Garbage time** (excluded in the PPA, defender and O-line queries): score margin > 38 in Q2, > 28 in Q3, > 22 in Q4.
+- **Opponent adjustment** (`sec_team_ppa.sql`): each opponent's season average over all FBS games, leaving out its plays against the team being rated; play PPA minus that, plus the FBS average = PPA against an average opponent.
+- **Defenders and linemen** come from the play text, since plays carry no player IDs: tacklers in parentheses (`(#17 X.Atkins; #1 C.Anthony)`), `intercepted / broken up / hurried / forced by #nn Name`, and `PENALTY AUB Holding (#72 C.Best)`. They are matched to `/roster` on last name + jersey, falling back to last name + first initial (jerseys sometimes differ from the roster). Only games in the ESPN `#nn Name` format are covered; Auburn's 2025 weeks 1-8, for example, use full names without jerseys. `team_tackler_pct` / `team_text_pct` show coverage.
+- **Defender PPA is position-biased**: safeties and corners usually tackle after a completion has gained yards, so compare within a position group and use stop %, TFLs and havoc plays alongside it.
+- **Offensive line** has no per-player blocking data; it's graded as a unit (line yards: losses x1.2, 0-4 yds x1, 5-10 x0.5, 11+ x0; stuff %, power %, sack and pressure rate). Penalties are the only per-lineman stat, and with no snap counts only penalized linemen appear. Run direction is where the runner ended up ("rush left/middle/right"), not the designed gap.
 
 ### Notebooks (`notebooks/`)
 
@@ -140,14 +151,23 @@ Shared definitions used by the play-by-play queries:
 | `SEC_third_downs.ipynb` | `sec_team_third_down.sql`, `sec_scoring_drive_conversions.sql` | 3rd-down conversion vs total 3rd-down plays (overall/pass/rush); passing vs rushing vs overall conversion dot plot with SEC average and play counts; 1st vs 2nd half plays per drive sized by 3rd-down plays; scoring vs non-scoring drive conversion |
 | `sec_interceptions.ipynb` | `sec_interception_drives.sql` | Main QBs: play in drive vs drive yards before the INT; one dot per QB: avg yards to go vs avg play in drive (sized by INTs); **QB INT grade** (0-100: 50% INT rate, 30% costly INTs, 20% unforced INTs, each per 100 passes and scaled best = 100 to worst = 0) as a report card, INT-type breakdown and rate-vs-volume scatter |
 | `auburn_qbs.ipynb` | `Auburn_QBs.sql` | Passing vs rushing yards per Auburn QB |
+| `auburn_defense_ppa.ipynb` | `auburn_defense_player_ppa.sql`, `sec_linebacker_ppa.sql` | Auburn defenders: plays made vs average PPA on those plays, colored by position group (shape = position) with the team average line; Auburn LBs highlighted against all SEC LBs (plays per game vs average PPA, SEC medians, conference ranks) |
+| `auburn_offensive_line.ipynb` | `sec_offensive_line.sql`, `sec_offensive_line_players.sql` | Auburn linemen's penalties by type with yards cost; SEC linemen with the costliest penalties (penalty yards + gains called back); Auburn vs SEC on line yards, stuff %, power %, sack %, pressure % and O-line penalties (small multiples); run direction scatters vs the SEC: share of runs vs line yards for left/middle/right (dot size = runs), and left- vs right-side line yards per team |
 
 Notebook notes:
 - Select the `.venv` kernel and make sure the database container is running (`docker compose up -d`).
 - Queries containing `%` (e.g. `ILIKE '%intercept%'`) must be escaped as `%%` before `pd.read_sql`, because psycopg2 treats `%` as a parameter placeholder.
+- Don't wrap queries in SQLAlchemy `text()`: regexes such as `(?:Jr\.)` look like `:Jr` bind parameters. The newer notebooks use a `read_query()` helper that reads the file and doubles `%`.
 - `.sql` files with two queries are split on their `-- ---------- 2.` marker and each part loaded separately.
 - If a notebook is changed on disk while open in VS Code, use **File: Revert File** to load the new version (saving the open copy overwrites it).
 
 ## Data quality notes
+
+- Betting lines (`core.game_lines`, `core.game_spreads`):
+  - The API has lines only from 2013; earlier games return an empty `lines` array and drop out.
+  - Spreads are from the home side (-7 = home favored by 7). `ats_result` / `ou_result` are NULL until the game is final.
+  - The `consensus` provider runs through 2022; from 2023 `core.game_spreads` uses the median across providers (Bovada, DraftKings, ESPN Bet), so 2-provider games can show values like -42.75.
+  - Individual providers occasionally have the spread sign flipped (e.g. ESPN Bet, Auburn at Baylor 2025), so prefer `core.game_spreads` to filtering one book.
 
 - `(game_date, away_team, home_team)` is unique and enforced as a constraint.
 - 2020 has only ~568 games (COVID-shortened season).
