@@ -1,11 +1,16 @@
 -- =====================================================
--- core.games_api: typed games built from raw.api_games
--- Keeps games where at least one team is FBS and the game is completed.
--- Safe to re-run.
+-- core.games: one row per completed game with at least one FBS team (2004+),
+-- typed from raw.api_games. game_id is the API's game ID (the same ID used by
+-- core.plays, core.drives, core.team_games and core.game_lines).
+-- Load raw data first:  python src\ingest_api.py 2004 2026
+-- Safe to re-run. Drops core.team_games (built from this table); rebuild it
+-- with 06_core_team_games.sql afterwards.
 -- =====================================================
-DROP TABLE IF EXISTS core.games_api;
+DROP TABLE IF EXISTS core.team_games;
+DROP TABLE IF EXISTS core.games_api;    -- old name of this table
+DROP TABLE IF EXISTS core.games;
 
-CREATE TABLE core.games_api AS
+CREATE TABLE core.games AS
 SELECT
     (payload->>'id')::bigint                               AS game_id,
     (payload->>'season')::int                              AS season,
@@ -43,6 +48,11 @@ SELECT
     (payload->'awayLineScores'->>1)::int AS q2_away,
     (payload->'awayLineScores'->>2)::int AS q3_away,
     (payload->'awayLineScores'->>3)::int AS q4_away,
+    -- overtime: every line-score entry after the 4th (NULL if the game had no OT)
+    (SELECT sum(x::int) FROM jsonb_array_elements_text(payload->'homeLineScores')
+         WITH ORDINALITY AS t(x, i) WHERE i > 4)           AS ot_home,
+    (SELECT sum(x::int) FROM jsonb_array_elements_text(payload->'awayLineScores')
+         WITH ORDINALITY AS t(x, i) WHERE i > 4)           AS ot_away,
 
     (payload->>'excitementIndex')::numeric                 AS excitement_index,
     payload->>'notes'                                      AS notes
@@ -53,7 +63,9 @@ WHERE (payload->>'completed')::boolean
   AND (payload->>'homeClassification' = 'fbs'
        OR payload->>'awayClassification' = 'fbs');
 
-ALTER TABLE core.games_api ADD PRIMARY KEY (game_id);
-CREATE INDEX ix_games_api_season ON core.games_api (season, week);
-CREATE INDEX ix_games_api_home   ON core.games_api (home_team, season);
-CREATE INDEX ix_games_api_away   ON core.games_api (away_team, season);
+ALTER TABLE core.games ADD PRIMARY KEY (game_id);
+CREATE INDEX ix_games_season ON core.games (season, week);
+CREATE INDEX ix_games_home   ON core.games (home_team, season);
+CREATE INDEX ix_games_away   ON core.games (away_team, season);
+
+ANALYZE core.games;

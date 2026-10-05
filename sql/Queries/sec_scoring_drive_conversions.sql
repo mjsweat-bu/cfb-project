@@ -1,6 +1,6 @@
 -- 3rd- and 4th-down conversions on scoring vs non-scoring drives, by team,
 -- plus a conference-wide row. Change the season or conference in `params`.
--- Source: core.plays.
+-- Source: core.drives.
 -- Definitions:
 --   * Drive: a team's drive with at least one scrimmage play (the API also
 --     files kickoffs as the kicking team's own "drive").
@@ -15,33 +15,18 @@
 WITH params AS (
     SELECT 2026 AS season, 'SEC' AS conf
 ),
-all_plays AS (
-    SELECT p.*
-    FROM core.plays p
-    JOIN params x ON x.season = p.season AND x.conf = p.offense_conf
-),
 drives AS (
     SELECT
-        offense                                                         AS team,
-        drive_id,
-        CASE
-            WHEN bool_or(scoring AND play_type IN ('Rushing Touchdown', 'Passing Touchdown',
-                                                   'Rush', 'Pass Reception', 'Pass Completion',
-                                                   'Fumble Recovery (Own)'))
-                THEN 'TD'
-            WHEN bool_or(scoring AND play_type = 'Field Goal Good')
-                THEN 'FG'
-            ELSE 'none'
-        END                                                             AS result,
-        count(*) FILTER (WHERE is_scrimmage AND down = 3)               AS third_att,
-        count(*) FILTER (WHERE is_scrimmage AND down = 3
-                         AND off_yards >= distance)                     AS third_conv,
-        count(*) FILTER (WHERE is_scrimmage AND down = 4)               AS fourth_att,
-        count(*) FILTER (WHERE is_scrimmage AND down = 4
-                         AND off_yards >= distance)                     AS fourth_conv
-    FROM all_plays
-    GROUP BY offense, drive_id
-    HAVING bool_or(is_scrimmage)
+        d.offense                                                       AS team,
+        d.drive_id,
+        CASE WHEN d.result IN ('TD', 'FG') THEN d.result ELSE 'none' END AS result,
+        d.third_att,
+        d.third_conv,
+        d.fourth_att,
+        d.fourth_conv
+    FROM core.drives d
+    JOIN params x ON x.season = d.season AND x.conf = d.offense_conf
+    WHERE d.plays > 0
 )
 SELECT
     coalesce(team, '** ' || (SELECT conf FROM params) || ' total **')  AS team,

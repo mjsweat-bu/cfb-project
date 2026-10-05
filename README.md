@@ -1,19 +1,11 @@
 # College Football Data Pipeline
 
-An end-to-end data science project: raw CSV + CollegeFootballData API -> PostgreSQL (Docker) -> SQL modeling -> notebooks, dashboards, and ML.
+An end-to-end data science project: CollegeFootballData API -> PostgreSQL (Docker) -> SQL modeling -> notebooks, dashboards, and ML.
 
 ## Data sources
 
-### Kaggle CSV
-
-- Dataset: [name and Kaggle link]
-- Downloaded: 9/29/2026
-- Contents: one row per FBS game, 2002-2025, with scores, quarter scores, and box-score stats (away/home layout)
-- Note: seasons 2002-2003 have scores only (no box-score stats) and are excluded from `core`.
-
-The CSV is not in this repo (it's git-ignored). Place it at `data/cfb_data.csv`.
-
-### CollegeFootballData API
+All data comes from the CollegeFootballData API. (The project started from a Kaggle CSV of
+2002-2025 games; that pipeline was retired in favor of the API.)
 
 - API: [CollegeFootballData.com](https://collegefootballdata.com) (spec saved as `cfbd-openapi.json`)
 - Needs a free API key, stored in `.api.env` (git-ignored):
@@ -21,7 +13,7 @@ The CSV is not in this repo (it's git-ignored). Place it at `data/cfb_data.csv`.
    API_BASE_URL=https://api.collegefootballdata.com
    API_KEY=<your key>
 ```
-- Free tier allows 1,000 calls/month. A full 2004-2026 backfill costs ~46 calls for games, ~69 for team seasons, ~92 for player seasons, ~18 per season for plays (~460 for 2001-2026), ~18 per season for game player box scores (~216 for 2004-2015), and 2 per season for betting lines.
+- Free tier allows 1,000 calls/month. A full 2004-2026 backfill costs ~46 calls for games, ~69 for team seasons, ~92 for player seasons, ~18 per season for plays (~460 for 2001-2026), ~18 per season for game player box scores (~216 for 2004-2015), ~18 per season for team box scores (~420 for 2004-2026), and 2 per season for betting lines.
 - Endpoints loaded by `src/ingest_api.py`:
 
 | Mode | Endpoints | Raw table |
@@ -31,11 +23,12 @@ The CSV is not in this repo (it's git-ignored). Place it at `data/cfb_data.csv`.
 | `player_seasons` | `/stats/player/season`, `/player/usage`, `/ppa/players/season`, `/roster` | `raw.api_player_seasons` |
 | `plays` | `/calendar`, then `/plays` once per week (FBS games) | `raw.api_plays` |
 | `game_players` | `/calendar`, then `/games/players` once per week (FBS games) | `raw.api_game_players` |
+| `game_teams` | `/calendar`, then `/games/teams` once per week (FBS games) | `raw.api_game_teams` |
 | `lines` | `/lines` (regular + postseason, all providers; data starts in 2013) | `raw.api_lines` |
 
 `/player/season/overview` returns box score + usage + PPA for one player, but needs one call per player per season (~14,000/season). `player_seasons` gets the same data from the bulk endpoints in 4 calls per season.
 
-`plays` and `game_players` skip weeks that are already loaded and ended more than 7 days ago, so a daily run of the current season only refetches recent weeks.
+`plays`, `game_players` and `game_teams` skip weeks that are already loaded and ended more than 7 days ago, so a daily run of the current season only refetches recent weeks.
 
 Every run is logged to `raw.ingest_log`. Re-running a season upserts, so it's safe to refresh the current season daily.
 
@@ -43,15 +36,15 @@ Every run is logged to `raw.ingest_log`. Re-running a season upserts, so it's sa
 
 | Layer | Schema | Description |
 |---|---|---|
-| Raw | `raw.cfb_games` | CSV loaded as-is, all columns as text |
-| Raw | `raw.api_games`, `raw.api_team_seasons`, `raw.api_player_seasons`, `raw.api_plays`, `raw.api_game_players`, `raw.api_lines` | API responses stored as JSON (`payload jsonb`), one row per record |
-| Core | `core.games`, `core.team_games` | Typed, keyed tables; one row per game, and one row per team per game |
+| Raw | `raw.api_games`, `raw.api_team_seasons`, `raw.api_player_seasons`, `raw.api_plays`, `raw.api_game_players`, `raw.api_game_teams`, `raw.api_lines` | API responses stored as JSON (`payload jsonb`), one row per record |
+| Core | `core.games` | One row per completed game with at least one FBS team (2004+): date, venue, teams, classification, conference, score, quarter and OT scores, pregame Elo. `game_id` is the API's game ID, shared by every game-level table |
+| Core | `core.team_games` | One row per team per game: result, opponent, location, pregame Elo, official box score (`/games/teams`: first downs, 3rd/4th down, passing, rushing, turnovers, penalties, possession) for both sides, plus offense/defense PPA and success rate from `core.plays` and drive stats (drives, scoring drives, three-and-outs, points per drive, starting field position) from `core.drives` |
 | Core | `core.player_games` | One row per player per game (2004-2015), typed box-score stats from `/games/players` |
 | Core | `core.plays` | Typed play-by-play (2001+, ~3.4M plays), one row per play, with scrimmage flag, run/pass category, offensive yards and success flag |
+| Core | `core.drives` | One row per offensive possession (2001+), built from `core.plays`: start/end field position and clock, start score margin, plays, yards, PPA, 3rd/4th-down conversions, result (TD, FG, punt, INT, fumble, downs, ...), three-and-out flag, and the team's possession number in the game |
 | Core | `core.game_lines` | Betting lines (2013+), one row per game per provider: spread and total (open and close), moneylines, and ATS / over-under results. Spreads are from the home side (-7 = home favored by 7) |
 | Core | `core.game_spreads` | One line per game: the `consensus` provider where the API has it (through 2022), otherwise the median across providers |
-| Marts | `marts.team_seasons` | One row per team per season, built from the CSV (records, scoring, box-score averages) |
-| Marts | `marts.game_features` | One row per game with pre-game features only (season-to-date, last 5, prior season) + targets |
+| Marts | `marts.game_features` | One row per game with pre-game features only (pregame Elo, season-to-date box score and PPA, last 5 games, prior season, closing spread) + targets |
 | Marts | `marts.team_season_stats` | One row per FBS team per season, built from the API (records, scoring, box-score totals, advanced PPA/success-rate/havoc stats) |
 | Marts | `marts.player_season_stats` | One row per player per team per season, built from the API (bio, passing/rushing/receiving/defense/kicking/return stats, usage, PPA) |
 | Marts | `marts.player_career_stats` | One row per player: career totals and rates aggregated from `marts.player_season_stats` (the API has no career endpoint) |
@@ -71,25 +64,23 @@ Every run is logged to `raw.ingest_log`. Re-running a season upserts, so it's sa
    .venv\Scripts\Activate.ps1
    pip install -r requirements.txt
 ```
-5. Load the raw data:
+5. Create the helper functions and raw tables:
 ```
-   python src\load_raw.py
+   docker exec cfb-postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f /sql/01_functions.sql -f /sql/02_raw_api.sql'
 ```
-6. Build the core and mart layers by running these against the `cfb` database, in order:
-   `sql/02_core.sql`, `sql/03_marts.sql`, `sql/04_game_features.sql`
-7. Load the API data (needs `.api.env`, see above):
+6. Load the API data (needs `.api.env`, see above):
 ```
-   docker exec cfb-postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f /sql/05_raw_api.sql'
    python src\ingest_api.py 2004 2026                # games
    python src\ingest_api.py team_seasons 2004 2026   # season stats + records
    python src\ingest_api.py player_seasons 2004 2026 # player stats, usage, PPA, roster
    python src\ingest_api.py plays 2001 2026          # play-by-play
    python src\ingest_api.py game_players 2004 2015   # per-game player box scores
+   python src\ingest_api.py game_teams 2004 2026     # per-game team box scores
    python src\ingest_api.py lines 2004 2026          # betting lines
 ```
    With no years, a mode loads the current season only (e.g. `python src\ingest_api.py team_seasons`).
-8. Build the API tables by running these in order (08 uses 07 and 12):
-   `sql/07_team_season_stats.sql`, `sql/12_core_player_games.sql`, `sql/08_player_season_stats.sql`, `sql/09_player_career_stats.sql`, `sql/10_core_plays.sql`, `sql/11_team_season_downs.sql`, `sql/13_core_game_lines.sql`.
+7. Build the tables by running the scripts in numeric order (core before marts; each script lists what it needs in its header):
+   `sql/03_core_games.sql`, `sql/04_core_plays.sql`, `sql/05_core_drives.sql`, `sql/06_core_team_games.sql`, `sql/07_core_player_games.sql`, `sql/08_core_game_lines.sql`, `sql/09_team_season_stats.sql`, `sql/10_team_season_downs.sql`, `sql/11_player_season_stats.sql`, `sql/12_player_career_stats.sql`, `sql/13_game_features.sql`.
    Run them with `psql -1 -v ON_ERROR_STOP=1 ...` so a failed script rolls back instead of leaving its table dropped.
 
 ## Project layout
@@ -97,11 +88,10 @@ Every run is logged to `raw.ingest_log`. Re-running a season upserts, so it's sa
 ```
 docker-compose.yml   Postgres 16 container
 src/                 ingestion and feature code
-sql/                 numbered build scripts (02_core.sql, ...)
+sql/                 numbered build scripts (01_functions.sql, ...)
 cfbd-openapi.json    CollegeFootballData API spec
 sql/Queries/         checks and exploratory queries
 notebooks/           analysis notebooks
-data/                CSV files (git-ignored)
 ```
 
 ## Analysis queries and notebooks
@@ -117,23 +107,23 @@ they can be re-pointed without editing the logic.
 
 | File | What it returns | Source |
 |---|---|---|
-| `sec_team_third_down.sql` | Team offense by conference/season: 3rd-down plays, conversion rate, distance and yards gained, split by pass/rush (conversions, rate, avg yards to go); play calling; plays and drives per game/half/quarter; plays per drive by half/quarter; yards per drive | `core.plays` |
+| `sec_team_third_down.sql` | Team offense by conference/season: 3rd-down plays, conversion rate, distance and yards gained, split by pass/rush (conversions, rate, avg yards to go); play calling; plays and drives per game/half/quarter; plays per drive by half/quarter; yards per drive | `core.plays`, `core.drives` |
 | `sec_team_ppa.sql` | Team offense and defense by conference/season: PPA (EPA) per play and total, split by pass/rush, success rate and explosiveness (PPA on successful plays), strength of schedule (opponents' season averages, leave-one-out) and opponent-adjusted PPA overall/pass/rush, plus net adjusted PPA (offense minus defense); garbage time excluded | `core.plays` |
 | `auburn_defense_player_ppa.sql` | One team's defenders for a season: average PPA of the plays each made (tackles, sacks, INTs, PBUs, hurries, forced/recovered fumbles parsed from play text), vs. team average, run/pass tackle PPA, TFLs, stop %, havoc plays; roster name and position. Only games in the ESPN "(#nn Name)" text format are picked up | `core.plays`, `raw.api_player_seasons` |
 | `sec_linebacker_ppa.sql` | Conference-wide version of `auburn_defense_player_ppa.sql` for one roster position (default LB): every player's PPA on plays made, vs. own-team average, tackles by run/pass, TFLs, stop %, sacks/INTs/PBUs, havoc plays, with ranks and each team's tackler-parse coverage | `core.plays`, `raw.api_player_seasons` |
 | `sec_offensive_line.sql` | O-line as a unit by conference/season: line yards per rush, stuff %, power success %, second-level / open-field yards, run blocking by direction (left/middle/right), sack rate, pressure rate (sacks + hurries), O-line penalties per game, with conference ranks | `core.plays`, `raw.api_player_seasons` |
 | `sec_offensive_line_players.sql` | Individual offensive linemen: accepted penalties by type (holding, pre-snap, other), penalty yards, gains and TDs called back, 3rd/4th-down penalties, per-100-snap rate; roster bio. Penalties are the only per-lineman stat in play-by-play | `core.plays`, `raw.api_player_seasons` |
-| `sec_scoring_drive_conversions.sql` | 3rd/4th-down attempts and conversions on scoring (TD/FG) vs non-scoring drives, by team plus a conference total row | `core.plays` |
+| `sec_scoring_drive_conversions.sql` | 3rd/4th-down attempts and conversions on scoring (TD/FG) vs non-scoring drives, by team plus a conference total row | `core.drives` |
 | `sec_interception_drives.sql` | Two queries. (1) One row per team for its main QB (most pass plays): INTs per 100 passes, pick-sixes, return yards, play # in drive, passes/rushes/sacks before the INT, down and distance, field position, score/clock situation. (2) Every interception with passer, down & distance, drive context and play text | `core.plays` |
-| `first_possession_three_and_out.sql` | All-time (2001+) FBS ranking: how often a team's first possession of a game is a three-and-out punt | `core.plays`, `marts.team_season_stats` |
-| `three_and_outs.sql` | All-time FBS ranking of three-and-outs on any drive: totals, per game, % of drives, plus one column per season 2016-2026. Filter by conference (current members, or only seasons spent in the conference) | `core.plays`, `marts.team_season_stats` |
+| `first_possession_three_and_out.sql` | All-time (2001+) FBS ranking: how often a team's first possession of a game is a three-and-out punt | `core.drives`, `marts.team_season_stats` |
+| `three_and_outs.sql` | All-time FBS ranking of three-and-outs on any drive: totals, per game, % of drives, plus one column per season 2016-2026. Filter by conference (current members, or only seasons spent in the conference) | `core.drives`, `marts.team_season_stats` |
 | `qb_third_down.sql` | 3rd-down distance, yards gained and conversion rate per QB (QB plays matched from play text) | `core.plays`, `marts.player_season_stats` |
 | `Auburn_QBs.sql` | Auburn QBs with Auburn-only passing/rushing totals | `marts.player_season_stats` |
-| `Auburn_v_Tenn.sql` | Currently: SEC 2026 rows of `marts.team_season_stats` | `marts.team_season_stats` |
-| `test.sql` | Row-count and sanity checks for the core layer | `core.games` |
+| `test.sql` | Row-count and sanity checks for the game-level tables (expected values in comments) | `core.games`, `core.team_games`, `marts.game_features` |
 
 Shared definitions used by the play-by-play queries:
 - **Plays** are scrimmage plays (`core.plays.is_scrimmage`); penalties, timeouts and kicks are not plays. Sacks count as pass plays.
+- **Drives** come from `core.drives`: one row per possession, keyed on `(drive_id, offense)` because the API files the kickoff under the same `drive_id` as the receiving team's possession. Queries that need at least one snap filter on `plays > 0`.
 - **Three-and-out** = the team's 4th counted play on a drive is a punt (penalties don't count toward the 4 plays).
 - **QB names** come from the play text (`#12 A.Daniels pass ...` or `Hank Brown pass ...`, normalized to `A.Daniels`), since plays carry no player IDs.
 - **FBS** = team-seasons in `marts.team_season_stats` (2004+); 2001-2003 use each team's 2004 status.
@@ -169,15 +159,19 @@ Notebook notes:
   - The `consensus` provider runs through 2022; from 2023 `core.game_spreads` uses the median across providers (Bovada, DraftKings, ESPN Bet), so 2-provider games can show values like -42.75.
   - Individual providers occasionally have the spread sign flipped (e.g. ESPN Bet, Auburn at Baylor 2025), so prefer `core.game_spreads` to filtering one book.
 
-- `(game_date, away_team, home_team)` is unique and enforced as a constraint.
-- 2020 has only ~568 games (COVID-shortened season).
-- `has_stats` flags games with box-score data. Filter on it for models using box-score features.
+- `core.games` / `core.team_games`:
+  - Only completed games with at least one FBS team; FCS teams appear only in their games against FBS teams.
+  - 2020 has only ~534 FBS-vs-FBS games (COVID-shortened season).
+  - `has_stats` flags team-games with an official box score, `has_pbp` those with play-by-play. Filter on them for models using box-score or PPA features.
+  - Box scores match the retired Kaggle CSV on 99.7% of 2004-2010 team-games (points, yards, turnovers, penalties).
+  - `pregame_elo` is missing for ~8% of games, mostly against FCS teams.
+  - `possession_sec` is incomplete in the API before 2012: the two teams add up to ~37 minutes per game (2004-2011) instead of 60, so compare possession across eras as a share of the game, not raw minutes. (The retired CSV had the same gap.)
 - `marts.team_season_stats`:
   - Season totals include postseason games. The current season is season-to-date.
   - `sacks` and `tackles_for_loss` exist only from 2016; kick-return stats only from 2005. Earlier seasons are NULL.
   - API naming is confusing for interceptions: `ints_thrown` (API `interceptions`) is by the team's offense, `def_interceptions` (API `passesIntercepted`) is by its defense.
   - `def_*` advanced stats are what the defense allowed, so lower PPA / success rate is better.
-  - Cross-check vs `marts.team_seasons` (CSV): W-L matches for 2,577 of 2,581 shared team-seasons.
+  - Cross-checked against the retired Kaggle CSV: W-L matched for 2,577 of 2,581 shared team-seasons.
 - `marts.player_season_stats`:
   - Keyed on `(season, player_id, team)`; a player who transferred has one row per team.
   - `/stats/player/season` is missing many players before 2016 (8 players in 2004, and e.g. Cam Newton 2010). For 2004-2015, those gaps are filled by summing `core.player_games` (FBS teams only); `stats_source` = `season` or `games` says where a row's box score came from.

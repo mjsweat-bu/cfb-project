@@ -140,6 +140,7 @@ def load_player_seasons(conn, season):
 WEEKLY_ENDPOINTS = {
     "plays":         ("raw.api_plays",        "id", "gameId"),   # one row per play
     "games/players": ("raw.api_game_players", "id", "id"),       # one row per game
+    "games/teams":   ("raw.api_game_teams",   "id", "id"),       # one row per game
 }
 
 
@@ -197,12 +198,17 @@ def load_game_players(conn, season):
     load_weekly(conn, season, "games/players")
 
 
+def load_game_teams(conn, season):
+    load_weekly(conn, season, "games/teams")
+
+
 LOADERS = {
     "games": load_games,
     "team_seasons": load_team_seasons,
     "player_seasons": load_player_seasons,
     "plays": load_plays,
     "game_players": load_game_players,
+    "game_teams": load_game_teams,
     "lines": load_lines,
 }
 
@@ -214,6 +220,7 @@ if __name__ == "__main__":
     # python src\ingest_api.py player_seasons 2004 2025 -> player stats, usage, PPA, roster
     # python src\ingest_api.py plays 2016 2025          -> play-by-play (~18 calls per season)
     # python src\ingest_api.py game_players 2004 2015  -> player box scores per game (~18 calls per season)
+    # python src\ingest_api.py game_teams 2004 2026    -> team box scores per game (~18 calls per season)
     # python src\ingest_api.py lines 2004 2026          -> betting lines, all providers (2 calls per season)
     args = sys.argv[1:]
     loader = LOADERS[args.pop(0)] if args and args[0] in LOADERS else load_games

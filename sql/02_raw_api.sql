@@ -64,6 +64,19 @@ CREATE TABLE IF NOT EXISTS raw.api_game_players (
 );
 CREATE INDEX IF NOT EXISTS ix_api_game_players_week ON raw.api_game_players (season, season_type, week);
 
+-- Team box scores from /games/teams, one row per game: payload.teams[] has both teams' stats
+CREATE TABLE IF NOT EXISTS raw.api_game_teams (
+    source_id   text PRIMARY KEY,   -- the API's game ID
+    season      integer NOT NULL,
+    season_type text    NOT NULL,
+    week        integer NOT NULL,
+    game_id     bigint  NOT NULL,
+    payload     jsonb   NOT NULL,
+    first_seen  timestamptz NOT NULL DEFAULT now(),
+    fetched_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS ix_api_game_teams_week ON raw.api_game_teams (season, season_type, week);
+
 -- Betting lines from /lines, one row per game: payload.lines[] has one entry per provider
 CREATE TABLE IF NOT EXISTS raw.api_lines (
     source_id   text PRIMARY KEY,   -- the API's game ID

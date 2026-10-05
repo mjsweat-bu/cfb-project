@@ -1,7 +1,7 @@
 -- Three-and-outs on ANY drive: every drive where the punt is the 4th play (three plays,
 -- then punt), all-time, ranked for every FBS team. Change the highlighted team,
 -- minimum games and conference filter in `params`.
--- Source: core.plays (play-by-play 2001-2026; early seasons are incomplete in the API).
+-- Source: core.drives (built from play-by-play 2001-2026; early seasons are incomplete in the API).
 -- Definitions (same as first_possession_three_and_out.sql, without the first-drive rule):
 --   * Plays counted: the team's scrimmage plays and punts. Penalties, timeouts and
 --     kickoffs are not plays here, so "rush, false start, rush, incompletion, punt"
@@ -51,25 +51,11 @@ in_scope AS (
        OR (x.conf_seasons_only AND f.conf = x.conf)
        OR (NOT x.conf_seasons_only AND c.conf = x.conf)
 ),
-team_plays AS (
-    -- the team's own scrimmage plays and punts, numbered within each drive
-    SELECT p.season, p.game_id, p.offense AS team, p.drive_number, p.is_scrimmage,
-           p.play_type ILIKE '%punt%' AS is_punt,
-           row_number() OVER (PARTITION BY p.game_id, p.offense, p.drive_number
-                              ORDER BY p.play_number) AS play_seq
-    FROM core.plays p
-    JOIN in_scope s ON s.season = p.season AND s.team = p.offense
-    WHERE p.is_scrimmage OR p.play_type ILIKE '%punt%'
-),
 drives AS (
-    SELECT
-        team,
-        game_id,
-        min(season)                                                         AS season,
-        bool_or(play_seq = 4 AND is_punt)
-          AND count(*) FILTER (WHERE play_seq <= 3 AND is_scrimmage) = 3    AS three_and_out
-    FROM team_plays
-    GROUP BY team, game_id, drive_number
+    SELECT d.offense AS team, d.game_id, d.season, d.three_and_out
+    FROM core.drives d
+    JOIN in_scope s ON s.season = d.season AND s.team = d.offense
+    WHERE d.plays > 0 OR d.result = 'PUNT'
 ),
 by_team AS (
     SELECT

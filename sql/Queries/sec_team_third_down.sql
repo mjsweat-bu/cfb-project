@@ -1,7 +1,7 @@
 -- Team offense by conference and season: 3rd-down performance, play calling,
 -- plays and drives per quarter/half/game, and average drive length.
 -- Change the season or conference in `params`.
--- Source: core.plays, scrimmage plays only (down 1-4, run or pass; penalties,
+-- Source: core.plays and core.drives, scrimmage plays only (down 1-4, run or pass; penalties,
 -- kicks and 2-pt tries excluded; sacks count as pass plays).
 -- Notes:
 --   * A drive counts only if the team ran at least one scrimmage play on it
@@ -60,14 +60,10 @@ play_calls AS (
 ),
 drives AS (
     -- one row per drive: where it started, how many plays, how many yards
-    SELECT
-        offense                                                 AS team,
-        drive_id,
-        (array_agg(period ORDER BY period, clock_sec DESC))[1]  AS start_period,
-        count(*)                                                AS plays,
-        sum(off_yards)                                          AS yards
-    FROM plays
-    GROUP BY offense, drive_id
+    SELECT d.offense AS team, d.drive_id, d.start_period, d.plays, d.yards
+    FROM core.drives d
+    JOIN params x ON x.season = d.season AND x.conf = d.offense_conf
+    WHERE d.plays > 0
 ),
 drive_stats AS (
     SELECT

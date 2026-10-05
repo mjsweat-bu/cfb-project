@@ -13,7 +13,7 @@
 -- player_ids lists every API ID that went into a row.
 -- Caveats: careers are only as complete as the API's season coverage
 -- (thin before 2009, no usage/PPA before 2013), and 2026 is in progress.
--- Build 08_player_season_stats.sql first. Safe to re-run.
+-- Build 11_player_season_stats.sql first. Safe to re-run.
 -- =====================================================
 DROP TABLE IF EXISTS marts.player_career_stats;
 

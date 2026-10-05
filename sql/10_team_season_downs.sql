@@ -6,7 +6,7 @@
 --   off_* = the team's offense, def_* = what its defense allowed
 --   d1..d4 = 1st..4th down
 --   *_success_rate: gain >= 50% of distance on 1st, 70% on 2nd, 100% on 3rd/4th
--- Build 07_team_season_stats.sql (FBS team list) and 10_core_plays.sql first.
+-- Build 09_team_season_stats.sql (FBS team list) and 04_core_plays.sql first.
 -- Safe to re-run.
 -- =====================================================
 DROP TABLE IF EXISTS marts.team_season_downs;

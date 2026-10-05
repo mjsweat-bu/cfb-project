@@ -12,16 +12,10 @@
 --                           stats_source says which one a row's box score came from.
 -- Load raw data first:  python src\ingest_api.py player_seasons 2004 2026
 --                       python src\ingest_api.py game_players 2004 2015
--- Needs core.to_int (02_core.sql), marts.team_season_stats (07) and
--- core.player_games (12_core_player_games.sql). Safe to re-run.
+-- Needs core.to_int / core.to_num (01_functions.sql), marts.team_season_stats (09) and
+-- core.player_games (07_core_player_games.sql). Safe to re-run.
 -- =====================================================
 CREATE SCHEMA IF NOT EXISTS marts;
-
--- Safe numeric caster (stats like SACKS, TFL, YPC come as decimal strings)
-CREATE OR REPLACE FUNCTION core.to_num(t text) RETURNS numeric
-LANGUAGE sql IMMUTABLE AS $$
-    SELECT CASE WHEN btrim(t) ~ '^-?\d+(\.\d+)?$' THEN btrim(t)::numeric END
-$$;
 
 DROP TABLE IF EXISTS marts.player_season_stats;
 
