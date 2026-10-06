@@ -83,6 +83,14 @@ Every run is logged to `raw.ingest_log`. Re-running a season upserts, so it's sa
    `sql/03_core_games.sql`, `sql/04_core_plays.sql`, `sql/05_core_drives.sql`, `sql/06_core_team_games.sql`, `sql/07_core_player_games.sql`, `sql/08_core_game_lines.sql`, `sql/09_team_season_stats.sql`, `sql/10_team_season_downs.sql`, `sql/11_player_season_stats.sql`, `sql/12_player_career_stats.sql`, `sql/13_game_features.sql`.
    Run them with `psql -1 -v ON_ERROR_STOP=1 ...` so a failed script rolls back instead of leaving its table dropped.
 
+### Refreshing the current season
+
+After each game week, run:
+```
+   python src\refresh.py
+```
+It loads the current season from every API mode except `game_players` (~17 calls), rebuilds all scripts in numeric order (skipping `07`, whose 2004-2015 data doesn't change) and prints the latest week in `core.games`. It stops at the first error. Options: `--season 2025`, `--skip-load` (rebuild only, no API calls), `--full-rebuild` (include `07`). Running it again a few days later picks up stat corrections, because `plays` and `game_teams` refetch any week that ended in the last 7 days.
+
 ## Project layout
 
 ```
