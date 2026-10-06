@@ -12,7 +12,7 @@
 --   start_* / end_*  first / last scrimmage play of the drive (falls back to the
 --                    first / last punt or FG try on drives with no scrimmage play).
 --                    Clock is at the snap; the API has no drive end time.
---   start_margin     offense score minus defense score at the drive's first play
+--   start_margin     offense score minus defense score before the drive's first play
 --   plays            scrimmage plays (down 1-4 run/pass; penalties, kicks,
 --                    timeouts and 2-pt tries excluded). Sacks count as pass plays.
 --   yards            sum of off_yards on scrimmage plays (penalty yards not included)
@@ -79,9 +79,9 @@ d AS (
                  (array_agg(clock_sec     ORDER BY play_number) FILTER (WHERE is_action))[1])    AS start_clock_sec,
         coalesce((array_agg(yards_to_goal ORDER BY play_number) FILTER (WHERE is_scrimmage))[1],
                  (array_agg(yards_to_goal ORDER BY play_number) FILTER (WHERE is_action))[1])    AS start_yards_to_goal,
-        (array_agg(offense_score - defense_score ORDER BY play_number))[1]                       AS start_margin,
-        (array_agg(offense_score ORDER BY play_number))[1]                                       AS start_offense_score,
-        (array_agg(defense_score ORDER BY play_number))[1]                                       AS start_defense_score,
+        (array_agg(pre_offense_score - pre_defense_score ORDER BY play_number))[1]               AS start_margin,
+        (array_agg(pre_offense_score ORDER BY play_number))[1]                                   AS start_offense_score,
+        (array_agg(pre_defense_score ORDER BY play_number))[1]                                   AS start_defense_score,
         (array_agg(period        ORDER BY play_number DESC) FILTER (WHERE is_action))[1]         AS end_period,
         (array_agg(clock_sec     ORDER BY play_number DESC) FILTER (WHERE is_action))[1]         AS end_clock_sec,
         (array_agg(yards_to_goal ORDER BY play_number DESC) FILTER (WHERE is_action))[1]         AS end_yards_to_goal,

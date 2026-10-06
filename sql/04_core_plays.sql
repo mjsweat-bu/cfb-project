@@ -13,6 +13,10 @@
 --                  there is the defense's return yards).
 --   is_success     standard success rate: gain >= 50% of distance on 1st down,
 --                  70% on 2nd, 100% on 3rd/4th
+--   offense_score / defense_score   score AFTER the play (as the API reports it)
+--   pre_offense_score / pre_defense_score   score BEFORE the play, from the previous
+--                  play in the game (pre_home_score / pre_away_score from the home
+--                  side). Use these for anything describing the situation at the snap.
 -- =====================================================
 CREATE SCHEMA IF NOT EXISTS core;
 
@@ -70,8 +74,19 @@ c AS (
                           ELSE 'other' END
         END AS play_category
     FROM p
+),
+s AS (
+    -- score BEFORE the play: the API's offenseScore / defenseScore are after it
+    -- (a TD row already includes the 7), so take the previous play's score
+    SELECT c.*,
+        coalesce(lag(CASE WHEN offense = home_team THEN offense_score ELSE defense_score END) OVER g, 0) AS pre_home_score,
+        coalesce(lag(CASE WHEN offense = home_team THEN defense_score ELSE offense_score END) OVER g, 0) AS pre_away_score
+    FROM c
+    WINDOW g AS (PARTITION BY game_id ORDER BY drive_number, play_number, play_id)
 )
-SELECT c.*,
+SELECT s.*,
+    CASE WHEN offense = home_team THEN pre_home_score ELSE pre_away_score END AS pre_offense_score,
+    CASE WHEN offense = home_team THEN pre_away_score ELSE pre_home_score END AS pre_defense_score,
     (play_category IS NOT NULL AND down BETWEEN 1 AND 4)     AS is_scrimmage,
     CASE WHEN play_category IS NOT NULL
          THEN CASE WHEN play_type ILIKE '%interception%' OR play_type = 'Fumble Return Touchdown'
@@ -83,7 +98,7 @@ SELECT c.*,
              WHEN down = 2 THEN yards_gained >= 0.7 * distance
              ELSE yards_gained >= distance END
     END                                                      AS is_success
-FROM c;
+FROM s;
 
 ALTER TABLE core.plays ADD PRIMARY KEY (play_id);
 CREATE INDEX ix_plays_game    ON core.plays (game_id);

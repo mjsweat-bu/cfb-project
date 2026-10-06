@@ -45,6 +45,7 @@ Every run is logged to `raw.ingest_log`. Re-running a season upserts, so it's sa
 | Core | `core.game_lines` | Betting lines (2013+), one row per game per provider: spread and total (open and close), moneylines, and ATS / over-under results. Spreads are from the home side (-7 = home favored by 7) |
 | Core | `core.game_spreads` | One line per game: the `consensus` provider where the API has it (through 2022), otherwise the median across providers |
 | Marts | `marts.game_features` | One row per game with pre-game features only (pregame Elo, season-to-date box score and PPA, last 5 games, prior season, closing spread) + targets |
+| Marts | `marts.play_features` | One row per scrimmage snap (2008+, ~2.1M rows) for a drive-scoring model that can be re-scored live: situation before the snap (down, distance, field position, seconds left in the half, score margin), the drive so far, both teams' season-to-date strength (PPA, points per drive, Elo, spread), and the target `drive_scored`. Every feature has an equivalent in the API's `/live/plays` feed |
 | Marts | `marts.team_season_stats` | One row per FBS team per season, built from the API (records, scoring, box-score totals, advanced PPA/success-rate/havoc stats) |
 | Marts | `marts.player_season_stats` | One row per player per team per season, built from the API (bio, passing/rushing/receiving/defense/kicking/return stats, usage, PPA) |
 | Marts | `marts.player_career_stats` | One row per player: career totals and rates aggregated from `marts.player_season_stats` (the API has no career endpoint) |
@@ -80,7 +81,7 @@ Every run is logged to `raw.ingest_log`. Re-running a season upserts, so it's sa
 ```
    With no years, a mode loads the current season only (e.g. `python src\ingest_api.py team_seasons`).
 7. Build the tables by running the scripts in numeric order (core before marts; each script lists what it needs in its header):
-   `sql/03_core_games.sql`, `sql/04_core_plays.sql`, `sql/05_core_drives.sql`, `sql/06_core_team_games.sql`, `sql/07_core_player_games.sql`, `sql/08_core_game_lines.sql`, `sql/09_team_season_stats.sql`, `sql/10_team_season_downs.sql`, `sql/11_player_season_stats.sql`, `sql/12_player_career_stats.sql`, `sql/13_game_features.sql`.
+   `sql/03_core_games.sql`, `sql/04_core_plays.sql`, `sql/05_core_drives.sql`, `sql/06_core_team_games.sql`, `sql/07_core_player_games.sql`, `sql/08_core_game_lines.sql`, `sql/09_team_season_stats.sql`, `sql/10_team_season_downs.sql`, `sql/11_player_season_stats.sql`, `sql/12_player_career_stats.sql`, `sql/13_game_features.sql`, `sql/14_play_features.sql`.
    Run them with `psql -1 -v ON_ERROR_STOP=1 ...` so a failed script rolls back instead of leaving its table dropped.
 
 ### Refreshing the current season
@@ -127,6 +128,12 @@ they can be re-pointed without editing the logic.
 | `three_and_outs.sql` | All-time FBS ranking of three-and-outs on any drive: totals, per game, % of drives, plus one column per season 2016-2026. Filter by conference (current members, or only seasons spent in the conference) | `core.drives`, `marts.team_season_stats` |
 | `qb_third_down.sql` | 3rd-down distance, yards gained and conversion rate per QB (QB plays matched from play text) | `core.plays`, `marts.player_season_stats` |
 | `Auburn_QBs.sql` | Auburn QBs with Auburn-only passing/rushing totals | `marts.player_season_stats` |
+| `weekly_season_so_far.sql` | A team's regular season through a week: result, score, closing spread and ATS result, yards, PPA, turnovers | `core.team_games`, `core.game_spreads` |
+| `weekly_recap_box.sql` | One game, one row per stat: team vs. opponent plus the team's average coming in (points, yards, yards/play, 3rd downs, turnovers, penalties, possession, PPA, success rate, points per drive, three-and-outs, starting field position) | `core.team_games` |
+| `weekly_recap_drives.sql` | Every drive of one game, both teams: quarter, clock, start, plays, yards, result, score before, 3rd downs, PPA; field position as numbers for a drive chart | `core.drives` |
+| `weekly_recap_quarters.sql` | One game by quarter, both offenses: plays, yards/play, success rate, PPA, pass rate, 20+ yard plays | `core.plays` |
+| `weekly_preview_game.sql` | The team's next game after a week (skips byes; works for past weeks too): kickoff, site, venue, spread and total | `raw.api_games`, `core.game_spreads` |
+| `weekly_preview_matchup.sql` | Team vs. next opponent, season to date, offense / defense / overall, with FBS ranks (1 = best) | `core.team_games`, `raw.api_games` |
 | `test.sql` | Row-count and sanity checks for the game-level tables (expected values in comments) | `core.games`, `core.team_games`, `marts.game_features` |
 
 Shared definitions used by the play-by-play queries:
@@ -151,6 +158,7 @@ Shared definitions used by the play-by-play queries:
 | `auburn_qbs.ipynb` | `Auburn_QBs.sql` | Passing vs rushing yards per Auburn QB |
 | `auburn_defense_ppa.ipynb` | `auburn_defense_player_ppa.sql`, `sec_linebacker_ppa.sql` | Auburn defenders: plays made vs average PPA on those plays, colored by position group (shape = position) with the team average line; Auburn LBs highlighted against all SEC LBs (plays per game vs average PPA, SEC medians, conference ranks) |
 | `auburn_offensive_line.ipynb` | `sec_offensive_line.sql`, `sec_offensive_line_players.sql` | Auburn linemen's penalties by type with yards cost; SEC linemen with the costliest penalties (penalty yards + gains called back); Auburn vs SEC on line yards, stuff %, power %, sack %, pressure % and O-line penalties (small multiples); run direction scatters vs the SEC: share of runs vs line yards for left/middle/right (dot size = runs), and left- vs right-side line yards per team |
+| `weekly_report.ipynb` | the six `weekly_*.sql` files | Template: set `TEAM`, `SEASON`, `WEEK` (default = latest game) and run all. Recap of the game (box score vs. the team's average coming in, drive chart, success rate by quarter) and preview of the next opponent (line, offense-vs-defense matchup tables, FBS-rank dumbbell chart). `read_query(name, **params)` overwrites each file's `params` CTE |
 
 Notebook notes:
 - Select the `.venv` kernel and make sure the database container is running (`docker compose up -d`).
@@ -197,5 +205,6 @@ Notebook notes:
   - Scrimmage plays only (down 1-4, run or pass); penalties, kicks, timeouts and 2-pt tries are excluded.
   - Sacks count as pass plays (analytics convention; official college stats count them as rushes).
   - Interceptions and fumble-return TDs count as 0 offensive yards, because the API's `yardsGained` on those plays is the defense's return.
+  - The API's `offenseScore` / `defenseScore` are the score **after** the play (a TD row already includes the 7). `pre_offense_score` / `pre_defense_score` carry the score before the snap, from the previous play in the game; use them for anything describing the situation at the snap (`core.drives` start scores and `marts.play_features` do).
   - Success rate: gain of at least 50% of the distance on 1st down, 70% on 2nd, 100% on 3rd/4th.
   - Includes postseason and garbage time.

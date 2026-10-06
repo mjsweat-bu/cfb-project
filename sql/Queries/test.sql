@@ -22,3 +22,5 @@ WHERE has_stats AND turnovers <> fumbles_lost + ints_thrown;                -- e
 
 -- one feature row per game
 SELECT (SELECT count(*) FROM marts.game_features) - (SELECT count(*) FROM core.games);  -- expect 0
+
+
