@@ -1,7 +1,7 @@
 -- =====================================================
 -- Betting lines from raw.api_lines (/lines). The API has lines from 2013 on;
 -- earlier games come back with an empty lines array and are dropped.
--- Load raw data first:  python src\ingest_api.py lines 2004 2026
+-- Load raw data first:  python -m cfb.ingest_api lines 2004 2026
 -- Safe to re-run.
 --
 -- core.game_lines   one row per game per provider (consensus, Bovada, DraftKings, ...)

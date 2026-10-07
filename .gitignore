@@ -8,3 +8,5 @@ mlruns/
 __pycache__/
 .api.env
 logs/
+/models/
+*.egg-info/

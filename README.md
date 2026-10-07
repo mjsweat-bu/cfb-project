@@ -14,7 +14,7 @@ All data comes from the CollegeFootballData API. (The project started from a Kag
    API_KEY=<your key>
 ```
 - Free tier allows 1,000 calls/month. A full 2004-2026 backfill costs ~46 calls for games, ~69 for team seasons, ~92 for player seasons, ~18 per season for plays (~460 for 2001-2026), ~18 per season for game player box scores (~216 for 2004-2015), ~18 per season for team box scores (~420 for 2004-2026), and 2 per season for betting lines.
-- Endpoints loaded by `src/ingest_api.py`:
+- Endpoints loaded by `src/cfb/ingest_api.py`:
 
 | Mode | Endpoints | Raw table |
 |---|---|---|
@@ -46,6 +46,7 @@ Every run is logged to `raw.ingest_log`. Re-running a season upserts, so it's sa
 | Core | `core.game_spreads` | One line per game: the `consensus` provider where the API has it (through 2022), otherwise the median across providers |
 | Marts | `marts.game_features` | One row per game with pre-game features only (pregame Elo, season-to-date box score and PPA, last 5 games, prior season, closing spread) + targets |
 | Marts | `marts.play_features` | One row per scrimmage snap (2008+, ~2.1M rows) for a drive-scoring model that can be re-scored live: situation before the snap (down, distance, field position, seconds left in the half, score margin), the drive so far, both teams' season-to-date strength (PPA, points per drive, Elo, spread), and the target `drive_scored`. Every feature has an equivalent in the API's `/live/plays` feed |
+| Marts | `marts.fourth_down_features` | One row per 4th-down decision (go / field goal / punt) with its outcome (converted, failed, turnover; made, missed, blocked; returned, touchback, muffed, return TD, blocked, ...) and pre-snap features (situation, both teams' season-to-date strength, kicking %, spread), for training the 4th-down decision models |
 | Marts | `marts.team_season_stats` | One row per FBS team per season, built from the API (records, scoring, box-score totals, advanced PPA/success-rate/havoc stats) |
 | Marts | `marts.player_season_stats` | One row per player per team per season, built from the API (bio, passing/rushing/receiving/defense/kicking/return stats, usage, PPA) |
 | Marts | `marts.player_career_stats` | One row per player: career totals and rates aggregated from `marts.player_season_stats` (the API has no career endpoint) |
@@ -65,54 +66,96 @@ Every run is logged to `raw.ingest_log`. Re-running a season upserts, so it's sa
    .venv\Scripts\Activate.ps1
    pip install -r requirements.txt
 ```
+   `requirements.txt` ends with `-e .`, which installs the project's own code (`src/cfb`) as the
+   `cfb` package. Scripts then run with `python -m cfb...` from any folder, and notebooks import
+   it (`from cfb.db import engine, read_query`).
 5. Create the helper functions and raw tables:
 ```
-   docker exec cfb-postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f /sql/01_functions.sql -f /sql/02_raw_api.sql'
+   docker exec cfb-postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f /sql/build/01_functions.sql -f /sql/build/02_raw_api.sql'
 ```
 6. Load the API data (needs `.api.env`, see above):
 ```
-   python src\ingest_api.py 2004 2026                # games
-   python src\ingest_api.py team_seasons 2004 2026   # season stats + records
-   python src\ingest_api.py player_seasons 2004 2026 # player stats, usage, PPA, roster
-   python src\ingest_api.py plays 2001 2026          # play-by-play
-   python src\ingest_api.py game_players 2004 2015   # per-game player box scores
-   python src\ingest_api.py game_teams 2004 2026     # per-game team box scores
-   python src\ingest_api.py lines 2004 2026          # betting lines
+   python -m cfb.ingest_api 2004 2026                # games
+   python -m cfb.ingest_api team_seasons 2004 2026   # season stats + records
+   python -m cfb.ingest_api player_seasons 2004 2026 # player stats, usage, PPA, roster
+   python -m cfb.ingest_api plays 2001 2026          # play-by-play
+   python -m cfb.ingest_api game_players 2004 2015   # per-game player box scores
+   python -m cfb.ingest_api game_teams 2004 2026     # per-game team box scores
+   python -m cfb.ingest_api lines 2004 2026          # betting lines
 ```
-   With no years, a mode loads the current season only (e.g. `python src\ingest_api.py team_seasons`).
-7. Build the tables by running the scripts in numeric order (core before marts; each script lists what it needs in its header):
-   `sql/03_core_games.sql`, `sql/04_core_plays.sql`, `sql/05_core_drives.sql`, `sql/06_core_team_games.sql`, `sql/07_core_player_games.sql`, `sql/08_core_game_lines.sql`, `sql/09_team_season_stats.sql`, `sql/10_team_season_downs.sql`, `sql/11_player_season_stats.sql`, `sql/12_player_career_stats.sql`, `sql/13_game_features.sql`, `sql/14_play_features.sql`.
+   With no years, a mode loads the current season only (e.g. `python -m cfb.ingest_api team_seasons`).
+7. Build the tables: `python -m cfb.refresh --skip-load --full-rebuild` runs every script in
+   `sql/build/` in numeric order (core before marts; each script lists what it needs in its header),
+   then the data checks.
    Run them with `psql -1 -v ON_ERROR_STOP=1 ...` so a failed script rolls back instead of leaving its table dropped.
 
 ### Refreshing the current season
 
 After each game week, run:
 ```
-   python src\refresh.py
+   python -m cfb.refresh
 ```
-It loads the current season from every API mode except `game_players` (~17 calls), rebuilds all scripts in numeric order (skipping `07`, whose 2004-2015 data doesn't change) and prints the latest week in `core.games`. It stops at the first error. Options: `--season 2025`, `--skip-load` (rebuild only, no API calls), `--full-rebuild` (include `07`). Running it again a few days later picks up stat corrections, because `plays` and `game_teams` refetch any week that ended in the last 7 days.
+It loads the current season from every API mode except `game_players` (~17 calls), rebuilds all scripts in `sql/build/` in numeric order (skipping `07`, whose 2004-2015 data doesn't change), prints the latest week in `core.games`, then runs the data checks (see Testing). It stops at the first error and exits with an error if a check fails. Options: `--season 2025`, `--skip-load` (rebuild only, no API calls), `--full-rebuild` (include `07`), `--checks-only`. Running it again a few days later picks up stat corrections, because `plays` and `game_teams` refetch any week that ended in the last 7 days.
 
 ## Project layout
 
 ```
-docker-compose.yml   Postgres 16 container
-src/                 ingestion and feature code
-sql/                 numbered build scripts (01_functions.sql, ...)
-cfbd-openapi.json    CollegeFootballData API spec
-sql/Queries/         checks and exploratory queries
-notebooks/           analysis notebooks
+docker-compose.yml       Postgres 16 container (./sql is mounted at /sql)
+pyproject.toml           makes src/cfb installable as the `cfb` package
+cfbd-openapi.json        CollegeFootballData API spec
+sql/build/               pipeline scripts, run in numeric order (01_functions.sql ... 15_fourth_down_features.sql)
+sql/analysis/            ad-hoc and report queries (read-only, against the built tables)
+src/cfb/
+  config.py              paths and settings in one place (loads .env / .api.env)
+  db.py                  database engine, get_conn(), read_query() with params override
+  ingest_api.py          API -> raw.* tables
+  refresh.py             in-season refresh: load, rebuild, check
+  checks.py              data checks (run by refresh and pytest)
+  models/                reproducible model training (drive_scoring.py)
+notebooks/               exploration, charts and reports
+models/                  trained model files + metadata (git-ignored)
+tests/                   pytest: data checks + unit tests
+data/                    local files (git-ignored)
 ```
+
+Conventions:
+- **Notebooks explore, scripts produce.** Once a model matters, its training moves to
+  `src/cfb/models/` so it reruns the same way; the notebook keeps the exploration and charts.
+- **A table that feeds a model is a build script** (`sql/build/`), not an analysis query.
+- **Model files are not source code:** they go to `models/` (git-ignored) as
+  `<name>_<timestamp>.joblib` with a matching `.json` (seasons, settings, metrics, feature list).
+
+## Models
+
+| Script | Model | Output |
+|---|---|---|
+| `python -m cfb.models.drive_scoring` | P(drive scores), snap by snap, from `marts.play_features`: gradient boosting (closer to the goal never lowers the probability; iteration count chosen on half the validation season's games, since sklearn's random early-stopping holdout leaks snaps from the same drive) + Platt calibration. Explored in `notebooks/scoring_pred_model.ipynb` | `models/drive_scoring_<timestamp>.joblib` + `.json` |
+
+Options: `--train-start 2014 --train-end 2023 --valid 2024` (defaults). The test season is never used by the script.
+
+## Testing
+
+```
+   pytest
+```
+- `tests/test_checks.py` runs every data check in `src/cfb/checks.py` against the database (skipped
+  if the database is down). Each check is a query returning the number of rows that break a rule;
+  0 = pass. `python -m cfb.refresh` runs the same checks after every build. Add a check whenever a
+  data problem is found.
+- `tests/test_db.py` unit-tests the `read_query` params override (no database needed).
+- `sql/analysis/data_coverage.sql` shows box-score and play-by-play coverage by season.
 
 ## Analysis queries and notebooks
 
-Ad-hoc analysis lives in `sql/Queries/` (read-only queries against the built tables) and
+Ad-hoc analysis lives in `sql/analysis/` (read-only queries against the built tables) and
 `notebooks/` (charts). Notebooks read the `.sql` files directly, so editing a query changes the
 notebook's data on the next run.
 
-### Queries (`sql/Queries/`)
+### Queries (`sql/analysis/`)
 
 Most queries start with a `params` CTE (season, conference, highlighted team, minimum games) so
-they can be re-pointed without editing the logic.
+they can be re-pointed without editing the logic. From Python, `read_query("file.sql", team="Georgia",
+season=2025)` (in `cfb.db`) replaces those values without touching the file.
 
 | File | What it returns | Source |
 |---|---|---|
@@ -134,7 +177,7 @@ they can be re-pointed without editing the logic.
 | `weekly_recap_quarters.sql` | One game by quarter, both offenses: plays, yards/play, success rate, PPA, pass rate, 20+ yard plays | `core.plays` |
 | `weekly_preview_game.sql` | The team's next game after a week (skips byes; works for past weeks too): kickoff, site, venue, spread and total | `raw.api_games`, `core.game_spreads` |
 | `weekly_preview_matchup.sql` | Team vs. next opponent, season to date, offense / defense / overall, with FBS ranks (1 = best) | `core.team_games`, `raw.api_games` |
-| `test.sql` | Row-count and sanity checks for the game-level tables (expected values in comments) | `core.games`, `core.team_games`, `marts.game_features` |
+| `data_coverage.sql` | Box-score and play-by-play coverage by season (pass/fail checks live in `src/cfb/checks.py`) | `core.team_games` |
 
 Shared definitions used by the play-by-play queries:
 - **Plays** are scrimmage plays (`core.plays.is_scrimmage`); penalties, timeouts and kicks are not plays. Sacks count as pass plays.
@@ -159,11 +202,13 @@ Shared definitions used by the play-by-play queries:
 | `auburn_defense_ppa.ipynb` | `auburn_defense_player_ppa.sql`, `sec_linebacker_ppa.sql` | Auburn defenders: plays made vs average PPA on those plays, colored by position group (shape = position) with the team average line; Auburn LBs highlighted against all SEC LBs (plays per game vs average PPA, SEC medians, conference ranks) |
 | `auburn_offensive_line.ipynb` | `sec_offensive_line.sql`, `sec_offensive_line_players.sql` | Auburn linemen's penalties by type with yards cost; SEC linemen with the costliest penalties (penalty yards + gains called back); Auburn vs SEC on line yards, stuff %, power %, sack %, pressure % and O-line penalties (small multiples); run direction scatters vs the SEC: share of runs vs line yards for left/middle/right (dot size = runs), and left- vs right-side line yards per team |
 | `weekly_report.ipynb` | the six `weekly_*.sql` files | Template: set `TEAM`, `SEASON`, `WEEK` (default = latest game) and run all. Recap of the game (box score vs. the team's average coming in, drive chart, success rate by quarter) and preview of the next opponent (line, offense-vs-defense matchup tables, FBS-rank dumbbell chart). `read_query(name, **params)` overwrites each file's `params` CTE |
+| `scoring_pred_model.ipynb` | `marts.play_features` | Drive-scoring model exploration: logistic baseline, gradient boosting + calibration, metrics by field position and down, calibration charts. The reproducible version is `src/cfb/models/drive_scoring.py` |
 
 Notebook notes:
 - Select the `.venv` kernel and make sure the database container is running (`docker compose up -d`).
-- Queries containing `%` (e.g. `ILIKE '%intercept%'`) must be escaped as `%%` before `pd.read_sql`, because psycopg2 treats `%` as a parameter placeholder.
-- Don't wrap queries in SQLAlchemy `text()`: regexes such as `(?:Jr\.)` look like `:Jr` bind parameters. The newer notebooks use a `read_query()` helper that reads the file and doubles `%`.
+- Notebooks import the shared setup: `from cfb.config import ROOT, SQL_ANALYSIS_DIR` and `from cfb.db import engine, read_query`.
+- `read_query()` doubles `%` before `pd.read_sql`, because psycopg2 treats `%` as a parameter placeholder (`ILIKE '%intercept%'`). Do the same when reading a `.sql` file by hand.
+- Don't wrap queries in SQLAlchemy `text()`: regexes such as `(?:Jr\.)` look like `:Jr` bind parameters.
 - `.sql` files with two queries are split on their `-- ---------- 2.` marker and each part loaded separately.
 - If a notebook is changed on disk while open in VS Code, use **File: Revert File** to load the new version (saving the open copy overwrites it).
 

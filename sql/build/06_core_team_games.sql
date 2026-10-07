@@ -7,7 +7,7 @@
 --   Drives                core.drives (05)            } has_pbp = the game has
 --   PPA / success rate    core.plays (04), scrimmage  } play-by-play
 --                         plays, garbage time included
--- Load raw data first:  python src\ingest_api.py game_teams 2004 2026
+-- Load raw data first:  python -m cfb.ingest_api game_teams 2004 2026
 -- Build 03, 04 and 05 first. Safe to re-run.
 --
 -- Column notes:

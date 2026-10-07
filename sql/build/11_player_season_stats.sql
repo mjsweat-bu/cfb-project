@@ -10,8 +10,8 @@
 --                           players missing from stats/player/season (common
 --                           before 2016, e.g. Cam Newton 2010). FBS teams only.
 --                           stats_source says which one a row's box score came from.
--- Load raw data first:  python src\ingest_api.py player_seasons 2004 2026
---                       python src\ingest_api.py game_players 2004 2015
+-- Load raw data first:  python -m cfb.ingest_api player_seasons 2004 2026
+--                       python -m cfb.ingest_api game_players 2004 2015
 -- Needs core.to_int / core.to_num (01_functions.sql), marts.team_season_stats (09) and
 -- core.player_games (07_core_player_games.sql). Safe to re-run.
 -- =====================================================

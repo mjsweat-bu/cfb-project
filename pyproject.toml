@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cfb"
+version = "0.1.0"
+description = "College football data pipeline: CFBD API -> Postgres -> SQL models -> notebooks and ML"
+requires-python = ">=3.12"
+# pinned dependencies live in requirements.txt
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

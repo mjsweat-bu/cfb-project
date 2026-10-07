@@ -1,16 +1,25 @@
-import os, sys, time
+"""Load CollegeFootballData API data into the raw.* tables (one mode per endpoint group).
+
+    python -m cfb.ingest_api                          -> games, current season (daily job)
+    python -m cfb.ingest_api 2004 2025                -> games, backfill a range
+    python -m cfb.ingest_api team_seasons 2004 2025   -> season stats + records
+    python -m cfb.ingest_api player_seasons 2004 2025 -> player stats, usage, PPA, roster
+    python -m cfb.ingest_api plays 2016 2025          -> play-by-play (~18 calls per season)
+    python -m cfb.ingest_api game_players 2004 2015   -> player box scores per game (~18 calls per season)
+    python -m cfb.ingest_api game_teams 2004 2026     -> team box scores per game (~18 calls per season)
+    python -m cfb.ingest_api lines 2004 2026          -> betting lines, all providers (2 calls per season)
+"""
+import sys, time
 from datetime import datetime, timedelta, timezone
 
 import requests
-import psycopg2
 from psycopg2.extras import execute_values, Json
-from dotenv import load_dotenv
 
-load_dotenv(".env")
-load_dotenv(".api.env")
+from cfb import config
+from cfb.db import get_conn
 
-API_BASE = os.environ["API_BASE_URL"].rstrip("/")
-API_KEY = os.environ["API_KEY"]
+API_BASE = config.API_BASE_URL
+API_KEY = config.API_KEY
 
 # Season-level endpoints -> function that builds a unique key for each record
 TEAM_SEASON_ENDPOINTS = {
@@ -44,17 +53,10 @@ def group_player_stats(records):
 PREPARE = {"stats/player/season": group_player_stats}
 
 
-def get_conn():
-    return psycopg2.connect(
-        host="localhost", port=5432,
-        dbname=os.environ["POSTGRES_DB"],
-        user=os.environ["POSTGRES_USER"],
-        password=os.environ["POSTGRES_PASSWORD"],
-    )
-
-
 def fetch(endpoint, params):
     """GET with retries for rate limits (429) and server errors (5xx)."""
+    if not API_KEY:
+        raise RuntimeError("API_KEY is not set: add it to .api.env at the project root")
     for attempt in range(4):
         r = requests.get(
             f"{API_BASE}/{endpoint}",
@@ -214,14 +216,7 @@ LOADERS = {
 
 
 if __name__ == "__main__":
-    # python src\ingest_api.py                         -> games, current year (daily job)
-    # python src\ingest_api.py 2004 2025               -> games, backfill a range
-    # python src\ingest_api.py team_seasons 2004 2025  -> season stats + records
-    # python src\ingest_api.py player_seasons 2004 2025 -> player stats, usage, PPA, roster
-    # python src\ingest_api.py plays 2016 2025          -> play-by-play (~18 calls per season)
-    # python src\ingest_api.py game_players 2004 2015  -> player box scores per game (~18 calls per season)
-    # python src\ingest_api.py game_teams 2004 2026    -> team box scores per game (~18 calls per season)
-    # python src\ingest_api.py lines 2004 2026          -> betting lines, all providers (2 calls per season)
+    # usage: see the module docstring
     args = sys.argv[1:]
     loader = LOADERS[args.pop(0)] if args and args[0] in LOADERS else load_games
     years = [int(a) for a in args]

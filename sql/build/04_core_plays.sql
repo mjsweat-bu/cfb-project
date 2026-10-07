@@ -1,6 +1,6 @@
 -- =====================================================
 -- core.plays: typed play-by-play from raw.api_plays (FBS games, 2016+)
--- Load raw data first:  python src\ingest_api.py plays 2016 2026
+-- Load raw data first:  python -m cfb.ingest_api plays 2016 2026
 -- Safe to re-run.
 --
 -- Derived columns:

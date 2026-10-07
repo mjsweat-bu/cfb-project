@@ -1,6 +1,6 @@
 -- =====================================================
 -- core.player_games: one row per player per game (FBS games), from raw.api_game_players
--- Load raw data first:  python src\ingest_api.py game_players 2004 2015
+-- Load raw data first:  python -m cfb.ingest_api game_players 2004 2015
 -- Currently loaded for 2004-2015, where /stats/player/season is missing many
 -- players (e.g. Cam Newton 2010). 11_player_season_stats.sql uses this table
 -- to fill those gaps, so build this before 11.

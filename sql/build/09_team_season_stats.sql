@@ -5,7 +5,7 @@
 --                         records                -> W/L splits, expected wins
 --   raw.api_games                                -> points for / against
 -- Season stats include postseason games. Current season = season-to-date.
--- Load raw data first:  python src\ingest_api.py team_seasons 2004 2026
+-- Load raw data first:  python -m cfb.ingest_api team_seasons 2004 2026
 -- Safe to re-run.
 -- =====================================================
 CREATE SCHEMA IF NOT EXISTS marts;
