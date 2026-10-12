@@ -8,6 +8,7 @@
     python -m cfb.ingest_api game_players 2004 2015   -> player box scores per game (~18 calls per season)
     python -m cfb.ingest_api game_teams 2004 2026     -> team box scores per game (~18 calls per season)
     python -m cfb.ingest_api lines 2004 2026          -> betting lines, all providers (2 calls per season)
+    python -m cfb.ingest_api coaches_rankings 2000 2026 -> head coaches + weekly polls (2 calls per season)
 """
 import sys, time
 from datetime import datetime, timedelta, timezone
@@ -26,6 +27,12 @@ TEAM_SEASON_ENDPOINTS = {
     "stats/season":          lambda r: f"{r['team']}|{r['statName']}",
     "stats/season/advanced": lambda r: r["team"],
     "records":               lambda r: str(r["teamId"]),
+}
+
+# Head coaches and weekly polls, stored in raw.api_team_seasons next to the season stats.
+COACH_RANKING_ENDPOINTS = {
+    "coaches":  lambda r: str(r.get("id") or f"{r['firstName']}|{r['lastName']}|{r.get('hireDate') or ''}"),
+    "rankings": lambda r: f"{r['seasonType']}|{r['week']}",
 }
 
 # Bulk equivalents of /player/season/overview (which needs one call per player):
@@ -134,6 +141,10 @@ def load_team_seasons(conn, season):
     load_season_endpoints(conn, season, "raw.api_team_seasons", TEAM_SEASON_ENDPOINTS)
 
 
+def load_coaches_rankings(conn, season):
+    load_season_endpoints(conn, season, "raw.api_team_seasons", COACH_RANKING_ENDPOINTS)
+
+
 def load_player_seasons(conn, season):
     load_season_endpoints(conn, season, "raw.api_player_seasons", PLAYER_SEASON_ENDPOINTS)
 
@@ -212,6 +223,7 @@ LOADERS = {
     "game_players": load_game_players,
     "game_teams": load_game_teams,
     "lines": load_lines,
+    "coaches_rankings": load_coaches_rankings,
 }
 
 

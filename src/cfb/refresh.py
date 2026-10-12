@@ -1,6 +1,6 @@
 """Refresh the current season: load new API data, rebuild the tables, run the data checks.
 
-    python -m cfb.refresh                 -> load + rebuild + check the current season (~17 API calls)
+    python -m cfb.refresh                 -> load + rebuild + check the current season (~19 API calls)
     python -m cfb.refresh --season 2025   -> a different season
     python -m cfb.refresh --skip-load     -> rebuild + check only (no API calls)
     python -m cfb.refresh --full-rebuild  -> also rebuild 07 (2004-2015 player box scores, ~70s)
@@ -20,7 +20,7 @@ from cfb.checks import run_checks
 
 # Loads for one season, in order. game_players is left out: it only covers 2004-2015.
 # plays and game_teams refetch only weeks not loaded yet or that ended in the last 7 days.
-LOADS = ["games", "plays", "game_teams", "team_seasons", "player_seasons", "lines"]
+LOADS = ["games", "plays", "game_teams", "team_seasons", "player_seasons", "lines", "coaches_rankings"]
 
 # Build scripts skipped unless --full-rebuild: their inputs don't change in-season.
 STATIC_SCRIPTS = {"07"}   # core.player_games (2004-2015)

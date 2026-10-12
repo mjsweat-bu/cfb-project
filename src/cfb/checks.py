@@ -29,10 +29,16 @@ CHECKS = [
         WHERE has_stats AND turnovers <> fumbles_lost + ints_thrown"""),
 
     ("box_score_coverage",
-     "no season has box scores for under 90% of team-games",
+     "no season (2004+, where /games/teams is loaded) has box scores for under 90% of team-games",
      """SELECT count(*) FROM (
-            SELECT season FROM core.team_games GROUP BY season
+            SELECT season FROM core.team_games WHERE season >= 2004 GROUP BY season
             HAVING avg(has_stats::int) < 0.9) x"""),
+
+    ("one_ap_rank_per_team_week",
+     "core.poll_ranks has at most one AP rank per team per week",
+     """SELECT count(*) FROM (
+            SELECT 1 FROM core.poll_ranks WHERE poll = 'AP Top 25'
+            GROUP BY season, season_type, week, team HAVING count(*) > 1) x"""),
 
     ("one_feature_row_per_game",
      "marts.game_features has one row per core.games row",

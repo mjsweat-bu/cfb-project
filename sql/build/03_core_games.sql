@@ -1,8 +1,9 @@
 -- =====================================================
--- core.games: one row per completed game with at least one FBS team (2004+),
+-- core.games: one row per completed game with at least one FBS team (2000+;
+-- box scores in core.team_games start in 2004),
 -- typed from raw.api_games. game_id is the API's game ID (the same ID used by
 -- core.plays, core.drives, core.team_games and core.game_lines).
--- Load raw data first:  python -m cfb.ingest_api 2004 2026
+-- Load raw data first:  python -m cfb.ingest_api 2000 2026
 -- Safe to re-run. Drops core.team_games (built from this table); rebuild it
 -- with 06_core_team_games.sql afterwards.
 -- =====================================================

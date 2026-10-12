@@ -25,6 +25,7 @@ All data comes from the CollegeFootballData API. (The project started from a Kag
 | `game_players` | `/calendar`, then `/games/players` once per week (FBS games) | `raw.api_game_players` |
 | `game_teams` | `/calendar`, then `/games/teams` once per week (FBS games) | `raw.api_game_teams` |
 | `lines` | `/lines` (regular + postseason, all providers; data starts in 2013) | `raw.api_lines` |
+| `coaches_rankings` | `/coaches`, `/rankings` (one call each per season; loaded 2000-2026) | `raw.api_team_seasons` (endpoints `coaches`, `rankings`) |
 
 `/player/season/overview` returns box score + usage + PPA for one player, but needs one call per player per season (~14,000/season). `player_seasons` gets the same data from the bulk endpoints in 4 calls per season.
 
@@ -37,13 +38,15 @@ Every run is logged to `raw.ingest_log`. Re-running a season upserts, so it's sa
 | Layer | Schema | Description |
 |---|---|---|
 | Raw | `raw.api_games`, `raw.api_team_seasons`, `raw.api_player_seasons`, `raw.api_plays`, `raw.api_game_players`, `raw.api_game_teams`, `raw.api_lines` | API responses stored as JSON (`payload jsonb`), one row per record |
-| Core | `core.games` | One row per completed game with at least one FBS team (2004+): date, venue, teams, classification, conference, score, quarter and OT scores, pregame Elo. `game_id` is the API's game ID, shared by every game-level table |
+| Core | `core.games` | One row per completed game with at least one FBS team (2000+; box scores in `core.team_games` from 2004): date, venue, teams, classification, conference, score, quarter and OT scores, pregame Elo. `game_id` is the API's game ID, shared by every game-level table |
 | Core | `core.team_games` | One row per team per game: result, opponent, location, pregame Elo, official box score (`/games/teams`: first downs, 3rd/4th down, passing, rushing, turnovers, penalties, possession) for both sides, plus offense/defense PPA and success rate from `core.plays` and drive stats (drives, scoring drives, three-and-outs, points per drive, starting field position) from `core.drives` |
 | Core | `core.player_games` | One row per player per game (2004-2015), typed box-score stats from `/games/players` |
 | Core | `core.plays` | Typed play-by-play (2001+, ~3.4M plays), one row per play, with scrimmage flag, run/pass category, offensive yards and success flag |
 | Core | `core.drives` | One row per offensive possession (2001+), built from `core.plays`: start/end field position and clock, start score margin, plays, yards, PPA, 3rd/4th-down conversions, result (TD, FG, punt, INT, fumble, downs, ...), three-and-out flag, and the team's possession number in the game |
 | Core | `core.game_lines` | Betting lines (2013+), one row per game per provider: spread and total (open and close), moneylines, and ATS / over-under results. Spreads are from the home side (-7 = home favored by 7) |
 | Core | `core.game_spreads` | One line per game: the `consensus` provider where the API has it (through 2022), otherwise the median across providers |
+| Core | `core.coach_seasons` | One row per head coach per team per season (2000+): record, preseason/postseason rank. Two rows when a team changed coaches mid-season |
+| Core | `core.poll_ranks` | One row per team per poll per week (2000+): AP Top 25, Coaches Poll, BCS / Playoff Committee. Regular-season week W = the poll going into week W's games (week 1 = preseason); postseason week 1 = final poll |
 | Marts | `marts.game_features` | One row per game with pre-game features only (pregame Elo, season-to-date box score and PPA, last 5 games, prior season, closing spread) + targets |
 | Marts | `marts.play_features` | One row per scrimmage snap (2008+, ~2.1M rows) for a drive-scoring model that can be re-scored live: situation before the snap (down, distance, field position, seconds left in the half, score margin), the drive so far, both teams' season-to-date strength (PPA, points per drive, Elo, spread), and the target `drive_scored`. Every feature has an equivalent in the API's `/live/plays` feed |
 | Marts | `marts.fourth_down_features` | One row per 4th-down decision (go / field goal / punt) with its outcome (converted, failed, turnover; made, missed, blocked; returned, touchback, muffed, return TD, blocked, ...) and pre-snap features (situation, both teams' season-to-date strength, kicking %, spread), for training the 4th-down decision models |
@@ -75,7 +78,8 @@ Every run is logged to `raw.ingest_log`. Re-running a season upserts, so it's sa
 ```
 6. Load the API data (needs `.api.env`, see above):
 ```
-   python -m cfb.ingest_api 2004 2026                # games
+   python -m cfb.ingest_api 2000 2026                # games
+   python -m cfb.ingest_api coaches_rankings 2000 2026 # head coaches + weekly polls
    python -m cfb.ingest_api team_seasons 2004 2026   # season stats + records
    python -m cfb.ingest_api player_seasons 2004 2026 # player stats, usage, PPA, roster
    python -m cfb.ingest_api plays 2001 2026          # play-by-play
@@ -177,6 +181,7 @@ season=2025)` (in `cfb.db`) replaces those values without touching the file.
 | `weekly_recap_quarters.sql` | One game by quarter, both offenses: plays, yards/play, success rate, PPA, pass rate, 20+ yard plays | `core.plays` |
 | `weekly_preview_game.sql` | The team's next game after a week (skips byes; works for past weeks too): kickoff, site, venue, spread and total | `raw.api_games`, `core.game_spreads` |
 | `weekly_preview_matchup.sql` | Team vs. next opponent, season to date, offense / defense / overall, with FBS ranks (1 = best) | `core.team_games`, `raw.api_games` |
+| `coach_vs_opponent.sql` | A head coach's record against one opponent across every team he coached (default: Nick Saban vs. Auburn). (1) Record by split: overall, by team, home/away, coach's team / opponent ranked or not, matchup, higher-ranked team, opponent in the top 10, favorite/underdog (2013+), one-score games, with the seasons of each loss. (2) Every game with AP ranks going in, score and spread | `core.coach_seasons`, `core.poll_ranks`, `core.team_games`, `core.game_spreads` |
 | `data_coverage.sql` | Box-score and play-by-play coverage by season (pass/fail checks live in `src/cfb/checks.py`) | `core.team_games` |
 
 Shared definitions used by the play-by-play queries:
