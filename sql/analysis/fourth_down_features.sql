@@ -1,1 +1,0 @@
-SELECT * FROM marts.fourth_down_features

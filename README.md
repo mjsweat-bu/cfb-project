@@ -8,11 +8,8 @@ All data comes from the CollegeFootballData API. (The project started from a Kag
 2002-2025 games; that pipeline was retired in favor of the API.)
 
 - API: [CollegeFootballData.com](https://collegefootballdata.com) (spec saved as `cfbd-openapi.json`)
-- Needs a free API key, stored in `.api.env` (git-ignored):
-```
-   API_BASE_URL=https://api.collegefootballdata.com
-   API_KEY=<your key>
-```
+- Needs a free API key, stored in `.api.env` (git-ignored; template in `.api.env.example`).
+- The data itself is not included in this repository: load it with your own key (see Setup).
 - Free tier allows 1,000 calls/month. A full 2004-2026 backfill costs ~46 calls for games, ~69 for team seasons, ~92 for player seasons, ~18 per season for plays (~460 for 2001-2026), ~18 per season for game player box scores (~216 for 2004-2015), ~18 per season for team box scores (~420 for 2004-2026), and 2 per season for betting lines.
 - Endpoints loaded by `src/cfb/ingest_api.py`:
 
@@ -50,6 +47,7 @@ Every run is logged to `raw.ingest_log`. Re-running a season upserts, so it's sa
 | Marts | `marts.game_features` | One row per game with pre-game features only (pregame Elo, season-to-date box score and PPA, last 5 games, prior season, closing spread) + targets |
 | Marts | `marts.play_features` | One row per scrimmage snap (2008+, ~2.1M rows) for a drive-scoring model that can be re-scored live: situation before the snap (down, distance, field position, seconds left in the half, score margin), the drive so far, both teams' season-to-date strength (PPA, points per drive, Elo, spread), and the target `drive_scored`. Every feature has an equivalent in the API's `/live/plays` feed |
 | Marts | `marts.fourth_down_features` | One row per 4th-down decision (go / field goal / punt) with its outcome (converted, failed, turnover; made, missed, blocked; returned, touchback, muffed, return TD, blocked, ...) and pre-snap features (situation, both teams' season-to-date strength, kicking %, spread), for training the 4th-down decision models |
+| Marts | `marts.expected_points` | One row per scrimmage snap (2008+, ~2.1M rows, regulation only) for the expected-points model: situation before the snap (half, seconds left in the half, down, distance, yards to goal, goal-to-go, score margin) and the target `next_score_label`, the next score in the same half from the offense's point of view (off_td / off_fg / off_safety / no_score / def_safety / def_fg / def_td). Scores are cleaned with a running max (the feed's score fields occasionally dip and reappear) |
 | Marts | `marts.team_season_stats` | One row per FBS team per season, built from the API (records, scoring, box-score totals, advanced PPA/success-rate/havoc stats) |
 | Marts | `marts.player_season_stats` | One row per player per team per season, built from the API (bio, passing/rushing/receiving/defense/kicking/return stats, usage, PPA) |
 | Marts | `marts.player_career_stats` | One row per player: career totals and rates aggregated from `marts.player_season_stats` (the API has no career endpoint) |
@@ -57,41 +55,74 @@ Every run is logged to `raw.ingest_log`. Re-running a season upserts, so it's sa
 
 ## Setup
 
-1. Install Docker Desktop, Python 3.12+, and Git.
-2. Copy `.env.example` to `.env` and set a password.
-3. Start the database:
+Works on Windows and macOS (Intel or Apple Silicon).
+
+1. **Install** Docker Desktop, Python 3.12, and Git.
+2. **Clone** the repository and `cd` into it.
+3. **Secrets** (both files are git-ignored; never commit them):
+```
+   cp .env.example .env            # Windows PowerShell: copy .env.example .env
+   cp .api.env.example .api.env
+```
+   Set a database password in `.env`, and your API key in `.api.env`
+   ([free key](https://collegefootballdata.com/key)).
+4. **Start the database:**
 ```
    docker compose up -d
 ```
-4. Create the Python environment:
+5. **Python environment:**
 ```
-   python -m venv .venv
-   .venv\Scripts\Activate.ps1
+   python3.12 -m venv .venv          # Windows: python -m venv .venv
+   source .venv/bin/activate         # Windows PowerShell: .venv\Scripts\Activate.ps1
    pip install -r requirements.txt
 ```
    `requirements.txt` ends with `-e .`, which installs the project's own code (`src/cfb`) as the
    `cfb` package. Scripts then run with `python -m cfb...` from any folder, and notebooks import
-   it (`from cfb.db import engine, read_query`).
-5. Create the helper functions and raw tables:
+   it (`from cfb.db import engine, read_query`). In VS Code / Jupyter, select the `.venv` kernel.
+6. **Get the data**, either way:
+   - **Option A: restore a database dump** (fastest; see [Moving the database](#moving-the-database-to-another-machine)), or
+   - **Option B: load it from the API.** Create the helper functions and raw tables, then run the loaders:
 ```
    docker exec cfb-postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f /sql/build/01_functions.sql -f /sql/build/02_raw_api.sql'
-```
-6. Load the API data (needs `.api.env`, see above):
-```
-   python -m cfb.ingest_api 2000 2026                # games
+   python -m cfb.ingest_api 2000 2026                  # games
    python -m cfb.ingest_api coaches_rankings 2000 2026 # head coaches + weekly polls
-   python -m cfb.ingest_api team_seasons 2004 2026   # season stats + records
-   python -m cfb.ingest_api player_seasons 2004 2026 # player stats, usage, PPA, roster
-   python -m cfb.ingest_api plays 2001 2026          # play-by-play
-   python -m cfb.ingest_api game_players 2004 2015   # per-game player box scores
-   python -m cfb.ingest_api game_teams 2004 2026     # per-game team box scores
-   python -m cfb.ingest_api lines 2004 2026          # betting lines
+   python -m cfb.ingest_api team_seasons 2004 2026     # season stats + records
+   python -m cfb.ingest_api player_seasons 2004 2026   # player stats, usage, PPA, roster
+   python -m cfb.ingest_api plays 2001 2026            # play-by-play
+   python -m cfb.ingest_api game_players 2004 2015     # per-game player box scores
+   python -m cfb.ingest_api game_teams 2004 2026       # per-game team box scores
+   python -m cfb.ingest_api lines 2004 2026            # betting lines
 ```
-   With no years, a mode loads the current season only (e.g. `python -m cfb.ingest_api team_seasons`).
-7. Build the tables: `python -m cfb.refresh --skip-load --full-rebuild` runs every script in
-   `sql/build/` in numeric order (core before marts; each script lists what it needs in its header),
-   then the data checks.
-   Run them with `psql -1 -v ON_ERROR_STOP=1 ...` so a failed script rolls back instead of leaving its table dropped.
+     A full backfill needs more calls than the free tier allows in one month (1,000), so spread it
+     over several months, or start with recent seasons. With no years, a mode loads the current
+     season only (e.g. `python -m cfb.ingest_api team_seasons`).
+7. **Build the tables** (skip if you restored a dump): `python -m cfb.refresh --skip-load --full-rebuild`
+   runs every script in `sql/build/` in numeric order (core before marts; each script lists what it
+   needs in its header), then the data checks. Each script runs in a transaction, so a failed script
+   leaves its table as it was.
+8. **Check it works:** `python -m cfb.refresh --checks-only` and `pytest`.
+
+### Moving the database to another machine
+
+The database is about 6.5 GB and isn't in git (rebuilding it from the API would exceed the
+monthly call limit). Copy it with a compressed dump instead.
+
+On the machine that has the data:
+```
+   docker exec cfb-postgres sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc -f /tmp/cfb.dump'
+   docker cp cfb-postgres:/tmp/cfb.dump ./cfb.dump
+```
+Write the dump inside the container and copy it out: redirecting `pg_dump` output in PowerShell
+(`> file`) corrupts the binary file. Move `cfb.dump` by USB drive or cloud storage (`*.dump` is
+git-ignored).
+
+On the new machine (after steps 1-5 above, with the same `POSTGRES_USER` / `POSTGRES_DB` in `.env`):
+```
+   docker cp cfb.dump cfb-postgres:/tmp/cfb.dump
+   docker exec cfb-postgres sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --no-owner /tmp/cfb.dump'
+```
+Each machine then has its own copy. Run the weekly API refresh on one of them only, so the API
+quota isn't spent twice.
 
 ### Refreshing the current season
 
@@ -99,7 +130,7 @@ After each game week, run:
 ```
    python -m cfb.refresh
 ```
-It loads the current season from every API mode except `game_players` (~17 calls), rebuilds all scripts in `sql/build/` in numeric order (skipping `07`, whose 2004-2015 data doesn't change), prints the latest week in `core.games`, then runs the data checks (see Testing). It stops at the first error and exits with an error if a check fails. Options: `--season 2025`, `--skip-load` (rebuild only, no API calls), `--full-rebuild` (include `07`), `--checks-only`. Running it again a few days later picks up stat corrections, because `plays` and `game_teams` refetch any week that ended in the last 7 days.
+It loads the current season from every API mode except `game_players` (~19 calls), rebuilds all scripts in `sql/build/` in numeric order (skipping `07`, whose 2004-2015 data doesn't change), prints the latest week in `core.games`, then runs the data checks (see Testing). It stops at the first error and exits with an error if a check fails. Options: `--season 2025`, `--skip-load` (rebuild only, no API calls), `--full-rebuild` (include `07`), `--checks-only`. Running it again a few days later picks up stat corrections, because `plays` and `game_teams` refetch any week that ended in the last 7 days.
 
 ## Project layout
 
