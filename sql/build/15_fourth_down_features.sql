@@ -190,6 +190,8 @@ SELECT
     fg_pct_szn,
     fg_att_szn,
     off_games_prior,
+    opp_start_ytg,
+    net_punt_yards,
 
     -- target
     outcome
