@@ -108,4 +108,10 @@ wcwidth==0.9.1
 webcolors==25.10.0
 webencodings==0.6.1
 websocket-client==1.9.2
+# Modeling (used by cfb.ml). torch from PyPI is CPU-only on Windows; for the NVIDIA GPU build:
+#   pip install torch --index-url https://download.pytorch.org/whl/cu130
+keras==3.15.1
+seaborn==0.13.2
+tensorflow==2.21.0
+torch==2.14.1
 -e .
