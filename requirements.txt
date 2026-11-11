@@ -114,4 +114,5 @@ keras==3.15.1
 seaborn==0.13.2
 tensorflow==2.21.0
 torch==2.14.1
+xgboost==3.4.1
 -e .

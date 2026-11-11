@@ -3,7 +3,7 @@
     from cfb.ml import *
 
 Gives you pandas/numpy/matplotlib/seaborn, the project's database helpers,
-scikit-learn, TensorFlow/Keras, PyTorch, and plot_history().
+scikit-learn, XGBoost, TensorFlow/Keras, PyTorch, and plot_history().
 """
 # --- standard library
 import copy
@@ -65,6 +65,9 @@ from sklearn.preprocessing import (
     SplineTransformer,
     StandardScaler,
 )
+
+# --- XGBoost
+from xgboost import XGBClassifier, XGBRegressor
 
 # --- TensorFlow / Keras
 import tensorflow as tf
