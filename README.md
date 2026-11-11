@@ -2,6 +2,8 @@
 
 An end-to-end data science project: CollegeFootballData API -> PostgreSQL (Docker) -> SQL modeling -> notebooks, dashboards, and ML.
 
+NOTE: This repository was made with the goal of familiarizing myself with the full stack of softwares and platforms that are used in modern data science. As such, it contains a mixture of human and AI work. While there might be some files that were made using AI, there has been a human in the loop 100% of the time and I have done my best to understand the full context of the repository. I do not let AI replace critical thinking.
+
 ## Data sources
 
 All data comes from the CollegeFootballData API. (The project started from a Kaggle CSV of
