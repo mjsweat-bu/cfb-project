@@ -17,7 +17,7 @@ WITH params AS (
 ),
 
 fourth AS (
-    SELECT f.*, g.game_date,
+    SELECT f.*, g.game_date, g.season_type,
            CASE WHEN f.decision = 'go' AND f.outcome = 'converted' THEN 1 ELSE 0 END AS convert_target
     FROM marts.fourth_down_features f
     JOIN core.games g ON g.game_id = f.game_id

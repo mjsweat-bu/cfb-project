@@ -148,8 +148,9 @@ src/cfb/
   ingest_api.py          API -> raw.* tables
   refresh.py             in-season refresh: load, rebuild, check
   checks.py              data checks (run by refresh and pytest)
-  models/                reproducible model training (drive_scoring.py)
-notebooks/               exploration, charts and reports
+  models/                reproducible models (drive_scoring.py, fourth_down.py)
+notebooks/               exploration, charts and reports (fourth_down_predictor/: the 4th-down models)
+dashboard/app.py         Streamlit dashboard for the 4th-down decisions
 models/                  trained model files + metadata (git-ignored)
 tests/                   pytest: data checks + unit tests
 data/                    local files (git-ignored)
@@ -170,6 +171,43 @@ Conventions:
 
 Options: `--train-start 2014 --train-end 2023 --valid 2024` (defaults). The test season is never used by the script.
 
+### Fourth-down decision tool
+
+Should a team go for it, kick a field goal, or punt? Four models, each built in its own notebook in
+`notebooks/fourth_down_predictor/`, trained on 2014-2023, tuned on 2024 and tested on 2025:
+
+| Notebook | Predicts | Model |
+|---|---|---|
+| `expected_points_model.ipynb` | Next score in the half (7 classes) -> expected points of any game state | Gradient boosting (multiclass) |
+| `go_for_it_model.ipynb` | P(convert) when going for it | Keras neural network (plus a PyTorch version for comparison) |
+| `field_goal_model.ipynb` | P(make) | Logistic regression with a spline on kick distance, kicker history |
+| `punt_model.ipynb` | Opponent's starting field position after a punt | XGBoost regression (plus a PyTorch network for comparison) |
+
+The last cell of each notebook saves its model to `models/`. `src/cfb/models/fourth_down.py` combines
+them: each option is valued in expected points (go = P(convert) x EP after converting + P(fail) x the
+opponent's EP at the spot, and so on), and the highest is recommended.
+
+```
+python -m cfb.models.fourth_down --season 2025              # score a season -> marts.fourth_down_decisions
+python -m cfb.models.fourth_down --season 2026 --week 5     # one regular-season week (reruns replace its rows)
+streamlit run dashboard/app.py                              # league rankings, team report cards, weekly recap, what-if calculator
+```
+
+**A learning project.** This part of the repository was built primarily as a learning exercise in the
+modeling workflow: season-based train/validation/test splits, naive baselines, log loss and
+calibration, grid search, and four model families (logistic regression, gradient boosting, XGBoost,
+neural networks in both Keras and PyTorch). Some choices favor learning a tool over the simplest
+option: the PyTorch networks were written to learn PyTorch next to Keras, not because a neural
+network was needed. The code that ties the models together (the module, tests and dashboard) was
+written with an AI assistant and reviewed. Known limitations, left in place and documented rather
+than hidden:
+- **The go model is optimistic at 4th & 2 to 4th & 7** (by about 4-7 points in 2025). It learns only
+  from plays where coaches chose to go for it, so it overrates the spots where they usually punt.
+  The planned fix is to train on 3rd-down plays at the same distances as well.
+- **Expected points value points, not wins**, so the tool's advice is weakest late in lopsided games.
+- **The saved expected-points model** was refit with settings from a shortened search (15 leaves,
+  5,000 minimum samples per leaf): 2025 test log loss 1.265 vs 1.262 for the notebook's full search.
+
 ## Testing
 
 ```
@@ -180,6 +218,9 @@ Options: `--train-start 2014 --train-end 2023 --valid 2024` (defaults). The test
   0 = pass. `python -m cfb.refresh` runs the same checks after every build. Add a check whenever a
   data problem is found.
 - `tests/test_db.py` unit-tests the `read_query` params override (no database needed).
+- `tests/test_fourth_down.py` checks the 4th-down tool: the decision logic (no database needed) and
+  spots with an obvious answer, like 4th & 1 at midfield -> go (skipped if the models in `models/`
+  or the database are missing). Rerun after retraining any of the four models.
 - `sql/analysis/data_coverage.sql` shows box-score and play-by-play coverage by season.
 
 ## Analysis queries and notebooks
@@ -216,6 +257,7 @@ season=2025)` (in `cfb.db`) replaces those values without touching the file.
 | `weekly_preview_matchup.sql` | Team vs. next opponent, season to date, offense / defense / overall, with FBS ranks (1 = best) | `core.team_games`, `raw.api_games` |
 | `coach_vs_opponent.sql` | A head coach's record against one opponent across every team he coached (default: Nick Saban vs. Auburn). (1) Record by split: overall, by team, home/away, coach's team / opponent ranked or not, matchup, higher-ranked team, opponent in the top 10, favorite/underdog (2013+), one-score games, with the seasons of each loss. (2) Every game with AP ranks going in, score and spread | `core.coach_seasons`, `core.poll_ranks`, `core.team_games`, `core.game_spreads` |
 | `data_coverage.sql` | Box-score and play-by-play coverage by season (pass/fail checks live in `src/cfb/checks.py`) | `core.team_games` |
+| `fourth_down_decisions.sql` | Every 4th down in a season with the features all four 4th-down models need, rebuilt for every play whatever the coach chose: prior go-for-it attempts and conversions, and the offense's current kicker's history. Used by `cfb.models.fourth_down` | `marts.fourth_down_features`, `core.plays`, `core.games` |
 
 Shared definitions used by the play-by-play queries:
 - **Plays** are scrimmage plays (`core.plays.is_scrimmage`); penalties, timeouts and kicks are not plays. Sacks count as pass plays.
@@ -241,6 +283,8 @@ Shared definitions used by the play-by-play queries:
 | `auburn_offensive_line.ipynb` | `sec_offensive_line.sql`, `sec_offensive_line_players.sql` | Auburn linemen's penalties by type with yards cost; SEC linemen with the costliest penalties (penalty yards + gains called back); Auburn vs SEC on line yards, stuff %, power %, sack %, pressure % and O-line penalties (small multiples); run direction scatters vs the SEC: share of runs vs line yards for left/middle/right (dot size = runs), and left- vs right-side line yards per team |
 | `weekly_report.ipynb` | the six `weekly_*.sql` files | Template: set `TEAM`, `SEASON`, `WEEK` (default = latest game) and run all. Recap of the game (box score vs. the team's average coming in, drive chart, success rate by quarter) and preview of the next opponent (line, offense-vs-defense matchup tables, FBS-rank dumbbell chart). `read_query(name, **params)` overwrites each file's `params` CTE |
 | `scoring_pred_model.ipynb` | `marts.play_features` | Drive-scoring model exploration: logistic baseline, gradient boosting + calibration, metrics by field position and down, calibration charts. The reproducible version is `src/cfb/models/drive_scoring.py` |
+| `fourth_down_predictor/*_model.ipynb` | `marts.fourth_down_features`, `marts.expected_points` | The four 4th-down models (see [Fourth-down decision tool](#fourth-down-decision-tool)): experiments, baselines, tuning, test scores, and a final cell that saves the model |
+| `fourth_down_predictor/fourth_down_decision.ipynb` | `fourth_down_decisions.sql`, `marts.fourth_down_decisions` | The combined tool on a season: sanity-check spots, coach vs model crosstab, costliest decisions, team rankings |
 
 Notebook notes:
 - Select the `.venv` kernel and make sure the database container is running (`docker compose up -d`).
