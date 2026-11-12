@@ -1,0 +1,7 @@
+# Streamlit Community Cloud installs this file (the one next to the app), not the
+# repo's requirements.txt. The hosted app only reads the snapshot in
+# dashboard/snapshot/, so it needs no database driver, models or TensorFlow.
+streamlit==1.67.0
+pandas==3.0.6
+pyarrow==26.0.1
+altair==6.3.0

@@ -4,6 +4,8 @@
     python -m cfb.models.fourth_down --season 2026 --week 5       -> one regular-season week
     python -m cfb.models.fourth_down --season 2025 --postseason   -> bowls and playoffs
     python -m cfb.models.fourth_down --season 2025 --no-save      -> print the summary only
+    python -m cfb.models.fourth_down --export                     -> write the dashboard snapshot
+                                                                     (add it to --season to do both)
 
 Explored in notebooks/fourth_down_predictor/ (one notebook per model, plus
 fourth_down_decision.ipynb, which uses this module). Each option is valued in
@@ -18,7 +20,8 @@ models/ (git-ignored; rerun a notebook's last cell to recreate its file):
 ep_model.joblib, fg_model.joblib, punt_model.joblib, go_model.keras + go_prep.joblib.
 Plays come from sql/analysis/fourth_down_decisions.sql. Results are written to
 marts.fourth_down_decisions, one row per play; scoring the same plays again
-replaces their rows.
+replaces their rows. --export copies that table (with each offense's conference)
+to dashboard/snapshot/, which the hosted dashboard reads since it has no database.
 """
 import argparse, os, time, warnings
 from datetime import datetime
@@ -239,6 +242,41 @@ def save(results):
     return len(rows)
 
 
+SNAPSHOT_PATH = config.ROOT / "dashboard" / "snapshot" / "fourth_down_decisions.parquet"
+
+SCORED_QUERY = """
+WITH team_conf AS (
+    -- each team's conference and division (fbs / fcs) that season, from its latest game
+    SELECT DISTINCT ON (season, team) season, team, conf, division
+    FROM (
+        SELECT season, home_team AS team, home_conf AS conf, home_class AS division, game_date FROM core.games
+        UNION ALL
+        SELECT season, away_team, away_conf, away_class, game_date FROM core.games
+    ) t
+    ORDER BY season, team, game_date DESC
+)
+SELECT d.*, c.conf, c.division
+FROM marts.fourth_down_decisions d
+LEFT JOIN team_conf c ON c.team = d.offense AND c.season = d.season
+WHERE (:season IS NULL OR d.season = :season)
+ORDER BY d.season, d.game_date, d.game_id, d.play_id
+"""
+
+
+def load_scored(season=None):
+    """Scored 4th downs from marts.fourth_down_decisions (one season, or all), with the
+    offense's conference and division."""
+    return pd.read_sql(text(SCORED_QUERY), engine, params={"season": season})
+
+
+def export_snapshot(path=SNAPSHOT_PATH):
+    """Every scored season to a Parquet file, for the hosted dashboard."""
+    df = load_scored()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    df.to_parquet(path, index=False)
+    return path, df
+
+
 def summary(results):
     agree = (results["coach_decision"] == results["recommend"]).mean()
     print(f"{len(results):,} fourth downs: coaches agreed with the model on {agree:.1%}, "
@@ -249,21 +287,32 @@ def summary(results):
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser(description="Score 4th-down decisions with the four fourth-down models.")
-    p.add_argument("--season", type=int, required=True)
+    p.add_argument("--season", type=int, help="season to score")
     g = p.add_mutually_exclusive_group()
     g.add_argument("--week", type=int, help="one regular-season week (default: the whole season)")
     g.add_argument("--postseason", action="store_true", help="bowls and playoffs only")
     p.add_argument("--no-save", action="store_true", help="print the summary without writing the table")
+    p.add_argument("--export", action="store_true",
+                   help="write every scored season to dashboard/snapshot/ for the hosted dashboard")
     a = p.parse_args()
+    if a.season is None and not a.export:
+        p.error("give --season to score, --export to write the dashboard snapshot, or both")
 
     t = time.time()
-    plays = load_plays(a.season, a.week, a.postseason)
-    if plays.empty:
-        raise SystemExit("no fourth downs found for that season / week")
-    print(f"loaded {len(plays):,} fourth downs ({time.time() - t:.0f}s)")
+    if a.season is not None:
+        plays = load_plays(a.season, a.week, a.postseason)
+        if plays.empty:
+            raise SystemExit("no fourth downs found for that season / week")
+        print(f"loaded {len(plays):,} fourth downs ({time.time() - t:.0f}s)")
 
-    results = score(plays, load_models())
-    summary(results)
-    if not a.no_save:
-        n = save(results)
-        print(f"saved {n:,} rows to marts.fourth_down_decisions ({time.time() - t:.0f}s total)")
+        results = score(plays, load_models())
+        summary(results)
+        if not a.no_save:
+            n = save(results)
+            print(f"saved {n:,} rows to marts.fourth_down_decisions ({time.time() - t:.0f}s total)")
+
+    if a.export:
+        path, df = export_snapshot()
+        seasons = ", ".join(str(s) for s in sorted(df["season"].unique()))
+        print(f"exported {len(df):,} rows (seasons {seasons}) to {path} "
+              f"({path.stat().st_size / 1e6:.1f} MB). Commit and push it to update the hosted dashboard.")

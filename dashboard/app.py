@@ -2,17 +2,28 @@
 
     streamlit run dashboard/app.py
 
-Reads marts.fourth_down_decisions, which `python -m cfb.models.fourth_down --season <year>`
-fills. The "What if" page runs the four models live (the first use of a season loads
-its plays, about 20 seconds; cached after that). The database must be running.
+Two data sources, picked automatically:
+  * live: marts.fourth_down_decisions in the project database, which
+    `python -m cfb.models.fourth_down --season <year>` fills. Adds the "What if"
+    page, which runs the four models (the first use of a season loads its plays,
+    about 20 seconds; cached after that).
+  * snapshot: dashboard/snapshot/fourth_down_decisions.parquet, written by
+    `python -m cfb.models.fourth_down --export`. Used when the cfb package or the
+    database isn't available, as on Streamlit Community Cloud, which installs
+    dashboard/requirements.txt (no database, models or TensorFlow).
 """
+from pathlib import Path
+
 import altair as alt
 import pandas as pd
 import streamlit as st
-from sqlalchemy import text
 
-from cfb.db import engine
-from cfb.models import fourth_down as fd
+SNAPSHOT = Path(__file__).parent / "snapshot" / "fourth_down_decisions.parquet"
+
+try:                                   # the project package: only installed where the database is
+    from cfb.models import fourth_down as fd
+except ImportError:
+    fd = None
 
 st.set_page_config(page_title="4th Down Decisions", page_icon="🏈", layout="wide")
 
@@ -38,35 +49,23 @@ def pct(s):
 
 
 @st.cache_data(ttl=300)
-def available_seasons():
-    try:
-        return pd.read_sql("SELECT DISTINCT season FROM marts.fourth_down_decisions ORDER BY season DESC",
-                           engine)["season"].tolist()
-    except Exception:
-        return []
+def load_all():
+    """Every scored 4th down, and where it came from: ('live' | 'snapshot' | None, DataFrame)."""
+    if fd is not None:
+        try:
+            return "live", fd.load_scored()
+        except Exception:                  # database not running: fall back to the snapshot
+            pass
+    if SNAPSHOT.exists():
+        return "snapshot", pd.read_parquet(SNAPSHOT)
+    return None, pd.DataFrame()
 
 
 @st.cache_data(ttl=300)
 def load_decisions(season):
-    """Scored 4th downs for a season, with the offense's conference and division."""
-    query = text("""
-        WITH team_conf AS (
-            SELECT DISTINCT ON (team) team, conf, division
-            FROM (
-                SELECT home_team AS team, home_conf AS conf, home_class AS division, game_date
-                FROM core.games WHERE season = :season
-                UNION ALL
-                SELECT away_team, away_conf, away_class, game_date
-                FROM core.games WHERE season = :season
-            ) t
-            ORDER BY team, game_date DESC
-        )
-        SELECT d.*, c.conf, c.division
-        FROM marts.fourth_down_decisions d
-        LEFT JOIN team_conf c ON c.team = d.offense
-        WHERE d.season = :season
-    """)
-    df = pd.read_sql(query, engine, params={"season": int(season)})
+    """Scored 4th downs for a season, with the offense's conference, division and display columns."""
+    _, scored = load_all()
+    df = scored[scored["season"] == season].copy()
     df["situation"] = [situation(d, y) for d, y in zip(df["distance"], df["yards_to_goal"])]
     df["agree"] = df["coach_decision"] == df["recommend"]
     df["coach"] = df["coach_decision"].map(LABELS)
@@ -121,14 +120,17 @@ CALLS_CONFIG = {
 
 # ---------- sidebar ----------
 
-seasons = available_seasons()
-if not seasons:
-    st.error("No scored 4th downs found. Is the database running? Score a season first with:\n\n"
-             "`python -m cfb.models.fourth_down --season 2025`")
+source, scored = load_all()
+if source is None or scored.empty:
+    st.error("No scored 4th downs found. Start the database and score a season with "
+             "`python -m cfb.models.fourth_down --season 2025`, or export a snapshot with `--export`.")
     st.stop()
 
+seasons = sorted(scored["season"].unique(), reverse=True)
+pages = ["League", "Team", "Week"] + (["What if"] if source == "live" else [])   # the models need the database
+
 st.sidebar.title("4th Down Decisions")
-page = st.sidebar.radio("Page", ["League", "Team", "Week", "What if"])
+page = st.sidebar.radio("Page", pages)
 season = st.sidebar.selectbox("Season", seasons)
 fbs_only = st.sidebar.checkbox("FBS offenses only", value=True)
 max_margin = st.sidebar.slider("Score within (points)", 0, 60, 16,
@@ -136,6 +138,9 @@ max_margin = st.sidebar.slider("Score within (points)", 0, 60, 16,
                                     "take risks the model calls mistakes. 16 = two scores.")
 st.sidebar.caption("The go-for-it model runs a few points optimistic on 4th & 2 to 4th & 7, "
                    "so the model leans toward going for it there.")
+if source == "snapshot":
+    st.sidebar.caption(f"Data snapshot from {pd.to_datetime(scored['scored_at']).max():%b %d, %Y}. "
+                       "The what-if calculator is available in the local version.")
 
 decisions = load_decisions(season)
 f = decisions[decisions["score_margin"].abs() <= max_margin]

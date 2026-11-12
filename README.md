@@ -12,6 +12,8 @@ All data comes from the CollegeFootballData API. (The project started from a Kag
 - API: [CollegeFootballData.com](https://collegefootballdata.com) (spec saved as `cfbd-openapi.json`)
 - Needs a free API key, stored in `.api.env` (git-ignored; template in `.api.env.example`).
 - The data itself is not included in this repository: load it with your own key (see Setup).
+  The one exception is `dashboard/snapshot/fourth_down_decisions.parquet`, a derived table of
+  model outputs (one row per 4th down) that the hosted dashboard reads.
 - Free tier allows 1,000 calls/month. A full 2004-2026 backfill costs ~46 calls for games, ~69 for team seasons, ~92 for player seasons, ~18 per season for plays (~460 for 2001-2026), ~18 per season for game player box scores (~216 for 2004-2015), ~18 per season for team box scores (~420 for 2004-2026), and 2 per season for betting lines.
 - Endpoints loaded by `src/cfb/ingest_api.py`:
 
@@ -191,7 +193,13 @@ opponent's EP at the spot, and so on), and the highest is recommended.
 python -m cfb.models.fourth_down --season 2025              # score a season -> marts.fourth_down_decisions
 python -m cfb.models.fourth_down --season 2026 --week 5     # one regular-season week (reruns replace its rows)
 streamlit run dashboard/app.py                              # league rankings, team report cards, weekly recap, what-if calculator
+python -m cfb.models.fourth_down --export                   # refresh the hosted dashboard's snapshot (then commit + push)
 ```
+
+The dashboard reads the database when it can and `dashboard/snapshot/` otherwise. Hosted on
+Streamlit Community Cloud (main file `dashboard/app.py`), it installs only
+`dashboard/requirements.txt` and runs from the snapshot, without the what-if calculator, which
+needs the models and the database.
 
 **A learning project.** This part of the repository was built primarily as a learning exercise in the
 modeling workflow: season-based train/validation/test splits, naive baselines, log loss and
